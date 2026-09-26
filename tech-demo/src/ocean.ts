@@ -244,6 +244,9 @@ void main() {
     radial = rise;
     tangent = vec3(0.0);
   } else {
+    // Patch: the run-up sheet is damped back (coarse grid -> visible facets) — the
+    // wet-sand band and per-fragment swash keep the animation readable.
+    radial = dispRad + rise * 0.5;
     radial += ${glslNum(PATCH_BIAS)}; // bias over the shell: no z-fighting at the rim
   }
   vec3 nrm = normalize(waveNrm - tA * slopeT - tB * slopeB);
@@ -308,11 +311,11 @@ ${FAST_NOISE_GLSL}
 ${skyGLSL(opts.sky)}
 ${swashGLSL(waveSet.swash)}
 
-/** Foam breakup pattern (procedural): two scrolling octaves + a slow mask. */
+/** Foam breakup pattern (procedural): two scrolling octaves, crisp sub-metre scale. */
 float foamPattern(vec3 p, float t) {
-  float a = waterFbm(p * 1.3 + vec3(0.0, t * 0.35, t * 0.12), 2);
-  float b = waterFbm(p * 3.4 - vec3(t * 0.22, 0.0, t * 0.31), 2);
-  return clamp(a * 0.65 + b * 0.65, 0.0, 1.4);
+  float a = waterFbm(p * 2.6 + vec3(0.0, t * 0.35, t * 0.12), 2);
+  float b = waterFbm(p * 6.0 - vec3(t * 0.22, 0.0, t * 0.31), 2);
+  return smoothstep(0.3, 0.95, a * 0.62 + b * 0.5);
 }
 
 void main() {
@@ -369,35 +372,36 @@ void main() {
   vec3 surfaceCol = mix(body, sky, clamp(fresnel * 1.15, 0.0, 0.92));
   surfaceCol += uSunTint * (spec * uSunIntensity * 0.55);
 
-  // --- Foam: whitecaps, surf whitewater, waterline band, receding lace. ---
+  // --- Foam: whitecaps, surf whitewater, waterline sheet, receding lace. ---
   float foam = 0.0;
   if (uFoamAmount > 0.01) {
     float pattern = foamPattern(vWorldPos, uTime);
+    float shallowC = clamp(1.0 - vDepth / 6.0, 0.0, 1.0);
+    float ph = swashPhaseA(vWorldPos, uTime, shallowC);
+    float arriving = smoothstep(-0.35, 0.85, sin(ph));
     // Deep-water whitecaps on steep crests.
     float tilt = length(n - up * dot(n, up));
-    float whitecap = smoothstep(0.42, 0.9, tilt) * smoothstep(0.45, 0.95, pattern);
-    // Surf: whitewater where the shoaling model clipped the wave height.
-    float surf = smoothstep(0.35, 0.85, vBreaking) * smoothstep(0.35, 0.85, pattern);
-    foam = max(whitecap, surf) * 0.85 * uFoamAmount;
+    float whitecap = smoothstep(0.5, 1.0, tilt) * smoothstep(0.6, 1.0, pattern);
+    // Surf: whitewater where the shoaling model clipped the wave height, pulsed by
+    // the swash so breakers arrive in sets instead of a uniform white field.
+    float surf = smoothstep(0.35, 0.85, vBreaking) * smoothstep(0.55, 1.0, pattern)
+               * (0.15 + 0.85 * arriving) * 0.85;
+    foam = max(whitecap, surf) * 0.8 * uFoamAmount;
 
     if (uShoreDetail > 0.5 && uSeaValid > 0.5) {
-      // Exact waterline from the depth buffer: foam where the water is a thin
-      // sheet over the terrain.
+      // Exact waterline from the depth buffer: foam only where the water is a thin
+      // sheet over the terrain, so a wide shallow shelf does not go solid white.
       vec2 sUv = clamp(vClip.xy / vClip.w * 0.5 + 0.5, 0.001, 0.999);
       float bgDepth = uCameraData.x + texture2D(uDepthTex, sUv).r * uCameraData.z;
       float sheet = max(bgDepth - vEyeDepth, 0.0);
-      float contact = 1.0 - smoothstep(0.2, 3.2, sheet);
+      float contact = 1.0 - smoothstep(0.12, 1.1, sheet);
       // Run-up: stronger foam as the swash arrives, a fading lace as it recedes.
-      float shallowC = clamp(1.0 - vDepth / 6.0, 0.0, 1.0);
-      float ph = swashPhaseA(vWorldPos, uTime, shallowC);
-      float run = sin(ph);
       float dRun = cos(ph);
-      float arriving = smoothstep(-0.2, 0.9, run);
-      float lace = smoothstep(0.25, -0.65, dRun) * (0.45 + 0.55 * pattern);
+      float lace = smoothstep(0.25, -0.65, dRun) * (0.4 + 0.6 * pattern);
       // Keep the foam hugging the waterline: only genuinely shallow water foams.
-      float shallowBand = 1.0 - smoothstep(0.4, 2.6, vDepth);
-      float shoreBand = ((0.35 + 0.75 * arriving) * contact + lace * contact) * shallowBand;
-      foam = max(foam, clamp(shoreBand, 0.0, 1.35) * 0.8 * uFoamAmount);
+      float shallowBand = 1.0 - smoothstep(0.25, 1.3, vDepth);
+      float shoreBand = ((0.2 + 0.5 * arriving) * contact + lace * contact) * shallowBand;
+      foam = max(foam, clamp(shoreBand, 0.0, 1.0) * 0.7 * uFoamAmount);
     }
   }
   foam = clamp(foam, 0.0, 1.0);

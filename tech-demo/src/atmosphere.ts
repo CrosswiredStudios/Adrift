@@ -96,9 +96,10 @@ void main() {
   float limb = pow(1.0 - abs(dot(N, V)), 5.0);
 
   // Sunlight gate: the shell only glows where the star is actually lighting it, so
-  // the night side of the planet never shows an atmosphere.
+  // the night side of the planet never shows an atmosphere. The ramp is deliberately
+  // wide: a tall shell seen from orbit otherwise ends in a visible straight terminator.
   float sunAmt = dot(N, L);
-  float day = smoothstep(-0.15, 0.25, sunAmt);
+  float day = smoothstep(-0.24, 0.34, sunAmt);
   float twilight = exp(-abs(sunAmt + 0.05) * 6.0);
 
   vec3 ray = skyTint * phaseRayleigh(mu) * skyStrength;

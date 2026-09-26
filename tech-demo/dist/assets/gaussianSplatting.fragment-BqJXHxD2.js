@@ -1,4 +1,4 @@
-import{t as e}from"./shaderStore-D-XQlhUT.js";import{t}from"./objectIdFunctions-B7azwFhh.js";import{n,t as r}from"./meshBlendTagFragmentOutput-DphJWeHM.js";import{D as i,H as a,O as o,P as s,U as c,k as l,n as u,o as d,ut as f}from"./index-B6WOAEs7.js";var p=`gaussianSplattingPixelShader`,m=`#include<clipPlaneFragmentDeclaration>
+import{t as e}from"./shaderStore-D-XQlhUT.js";import{t}from"./objectIdFunctions-B7azwFhh.js";import{n,t as r}from"./meshBlendTagFragmentOutput-DphJWeHM.js";import{D as i,H as a,O as o,P as s,U as c,k as l,n as u,o as d,ut as f}from"./index-CVjmudsc.js";var p=`gaussianSplattingPixelShader`,m=`#include<clipPlaneFragmentDeclaration>
 #include<logDepthDeclaration>
 #include<fogFragmentDeclaration>
 #define PREPASS_CUSTOM_VARYINGS
