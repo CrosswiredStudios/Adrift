@@ -1,13 +1,9 @@
 import { test, expect } from "@playwright/test";
+import { boot, collectErrors, expectNoErrors } from "./helpers";
 
 test("loads without errors and exposes game state", async ({ page }) => {
-  const errors: string[] = [];
-  page.on("pageerror", (e) => errors.push(String(e)));
-  page.on("console", (m) => {
-    if (m.type() === "error") errors.push(m.text());
-  });
-  await page.goto("/", { waitUntil: "networkidle" });
-  await page.waitForFunction(() => (window as any).__game !== undefined, null, { timeout: 30000 });
+  const errors = collectErrors(page);
+  await boot(page);
   // Let a few frames render.
   await page.waitForTimeout(3000);
   const snap = await page.evaluate(() => {
@@ -40,15 +36,15 @@ test("loads without errors and exposes game state", async ({ page }) => {
   const camDist = Math.hypot(
     snap.cameraPos[0] - snap.shipPos[0],
     snap.cameraPos[1] - snap.shipPos[1],
-    snap.cameraPos[2] - snap.shipPos[2]
+    snap.cameraPos[2] - snap.shipPos[2],
   );
   expect(camDist).toBeLessThan(40);
-  expect(errors.filter((e) => !e.includes("favicon"))).toEqual([]);
+  expectNoErrors(errors);
 });
 
 test("takeoff to space transitions atmosphere to zero", async ({ page }) => {
-  await page.goto("/", { waitUntil: "networkidle" });
-  await page.waitForFunction(() => (window as any).__game !== undefined, null, { timeout: 30000 });
+  const errors = collectErrors(page);
+  await boot(page);
   const start = await page.evaluate(() => {
     const g = (window as any).__game;
     return { alt: g.state.altitude, atmo: g.state.atmoDensity, height: g.bodies[0].atmosphereHeight };
@@ -64,23 +60,36 @@ test("takeoff to space transitions atmosphere to zero", async ({ page }) => {
     const ref = Math.abs(up.y) > 0.9 ? { x: 1, y: 0, z: 0 } : { x: 0, y: 1, z: 0 };
     const z = [up.x, up.y, up.z];
     let x = [ref.y * z[2] - ref.z * z[1], ref.z * z[0] - ref.x * z[2], ref.x * z[1] - ref.y * z[0]];
-    const xl = Math.hypot(x[0], x[1], x[2]); x = x.map((v) => v / xl);
+    const xl = Math.hypot(x[0], x[1], x[2]);
+    x = x.map((v) => v / xl);
     const y = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]];
     const m = [x[0], y[0], z[0], x[1], y[1], z[1], x[2], y[2], z[2]];
     const t = m[0] + m[4] + m[8];
     let qw, qx, qy, qz;
     if (t > 0) {
       const s = Math.sqrt(t + 1) * 2;
-      qw = 0.25 * s; qx = (m[7] - m[5]) / s; qy = (m[2] - m[6]) / s; qz = (m[3] - m[1]) / s;
+      qw = 0.25 * s;
+      qx = (m[7] - m[5]) / s;
+      qy = (m[2] - m[6]) / s;
+      qz = (m[3] - m[1]) / s;
     } else if (m[0] > m[4] && m[0] > m[8]) {
       const s = Math.sqrt(1 + m[0] - m[4] - m[8]) * 2;
-      qw = (m[7] - m[5]) / s; qx = 0.25 * s; qy = (m[1] + m[3]) / s; qz = (m[2] + m[6]) / s;
+      qw = (m[7] - m[5]) / s;
+      qx = 0.25 * s;
+      qy = (m[1] + m[3]) / s;
+      qz = (m[2] + m[6]) / s;
     } else if (m[4] > m[8]) {
       const s = Math.sqrt(1 + m[4] - m[0] - m[8]) * 2;
-      qw = (m[2] - m[6]) / s; qx = (m[1] + m[3]) / s; qy = 0.25 * s; qz = (m[5] + m[7]) / s;
+      qw = (m[2] - m[6]) / s;
+      qx = (m[1] + m[3]) / s;
+      qy = 0.25 * s;
+      qz = (m[5] + m[7]) / s;
     } else {
       const s = Math.sqrt(1 + m[8] - m[0] - m[4]) * 2;
-      qw = (m[3] - m[1]) / s; qx = (m[2] + m[6]) / s; qy = (m[5] + m[7]) / s; qz = 0.25 * s;
+      qw = (m[3] - m[1]) / s;
+      qx = (m[2] + m[6]) / s;
+      qy = (m[5] + m[7]) / s;
+      qz = 0.25 * s;
     }
     g.ship.rotationQuaternion.set(qx, qy, qz, qw);
     // Arcade scheme: Up arrow = throttle up; W pitches the nose, so leave it alone here.
@@ -90,7 +99,12 @@ test("takeoff to space transitions atmosphere to zero", async ({ page }) => {
     for (let i = 0; i < 2400; i++) {
       g.step(1 / 60); // up to 40 simulated seconds of powered climb
       if (i % 300 === 299) {
-        samples.push({ alt: g.state.altitude, atmo: g.state.atmoDensity, speed: g.state.velocity.length(), heat: g.state.heat });
+        samples.push({
+          alt: g.state.altitude,
+          atmo: g.state.atmoDensity,
+          speed: g.state.velocity.length(),
+          heat: g.state.heat,
+        });
       }
     }
     g.input["arrowup"] = false;
@@ -100,35 +114,49 @@ test("takeoff to space transitions atmosphere to zero", async ({ page }) => {
   const last = climb[climb.length - 1];
   expect(last.alt).toBeGreaterThan(start.height * 1.15); // clear of the atmosphere shell
   expect(last.atmo).toBe(0);
+  expectNoErrors(errors);
 });
 
 test("reentry heats up and lands back in atmosphere", async ({ page }) => {
-  await page.goto("/", { waitUntil: "networkidle" });
-  await page.waitForFunction(() => (window as any).__game !== undefined, null, { timeout: 30000 });
+  const errors = collectErrors(page);
+  await boot(page);
   const result = await page.evaluate(() => {
     const g = (window as any).__game;
     // Start in space above Vael: 400 units up, orbital-ish sideways velocity.
     const up = g.ship.position.subtract(g.bodies[0].center).normalize();
     g.ship.position.copyFrom(g.bodies[0].center).addInPlace(up.scale(600 + 400));
     g.state.velocity.set(0, 0, 0);
-    g.state.velocity.addInPlace(new (g.state.velocity.constructor as new (x: number, y: number, z: number) => typeof g.state.velocity)(60, 0, 0));
+    g.state.velocity.addInPlace(
+      new (g.state.velocity.constructor as new (x: number, y: number, z: number) => typeof g.state.velocity)(
+        60,
+        0,
+        0,
+      ),
+    );
     (g.state as any).cruise = 60;
     // Point nose down toward the planet for a steep reentry.
     const down = up.scale(-1);
     const ref = Math.abs(down.y) > 0.9 ? { x: 1, y: 0, z: 0 } : { x: 0, y: 1, z: 0 };
     const z = [down.x, down.y, down.z];
     let x = [ref.y * z[2] - ref.z * z[1], ref.z * z[0] - ref.x * z[2], ref.x * z[1] - ref.y * z[0]];
-    const xl = Math.hypot(x[0], x[1], x[2]); x = x.map((v) => v / xl);
+    const xl = Math.hypot(x[0], x[1], x[2]);
+    x = x.map((v) => v / xl);
     const y = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]];
     const m = [x[0], y[0], z[0], x[1], y[1], z[1], x[2], y[2], z[2]];
     const t = m[0] + m[4] + m[8];
     let qw, qx, qy, qz;
     if (t > 0) {
       const s = Math.sqrt(t + 1) * 2;
-      qw = 0.25 * s; qx = (m[7] - m[5]) / s; qy = (m[2] - m[6]) / s; qz = (m[3] - m[1]) / s;
+      qw = 0.25 * s;
+      qx = (m[7] - m[5]) / s;
+      qy = (m[2] - m[6]) / s;
+      qz = (m[3] - m[1]) / s;
     } else {
       const s = Math.sqrt(1 + m[8] - m[0] - m[4]) * 2;
-      qw = (m[3] - m[1]) / s; qx = (m[2] + m[6]) / s; qy = (m[5] + m[7]) / s; qz = 0.25 * s;
+      qw = (m[3] - m[1]) / s;
+      qx = (m[2] + m[6]) / s;
+      qy = (m[5] + m[7]) / s;
+      qz = 0.25 * s;
     }
     g.ship.rotationQuaternion.set(qx, qy, qz, qw);
     // Arcade scheme: fast cruise dives under Up-arrow throttle (W is pitch).
@@ -162,17 +190,24 @@ test("reentry heats up and lands back in atmosphere", async ({ page }) => {
     const lvl = Math.abs(glide.y) > 0.9 ? { x: 1, y: 0, z: 0 } : { x: 0, y: 1, z: 0 };
     const gz = [glide.x, glide.y, glide.z];
     let gx = [lvl.y * gz[2] - lvl.z * gz[1], lvl.z * gz[0] - lvl.x * gz[2], lvl.x * gz[1] - lvl.y * gz[0]];
-    const gxl = Math.hypot(gx[0], gx[1], gx[2]); gx = gx.map((v: number) => v / gxl);
+    const gxl = Math.hypot(gx[0], gx[1], gx[2]);
+    gx = gx.map((v: number) => v / gxl);
     const gy = [gz[1] * gx[2] - gz[2] * gx[1], gz[2] * gx[0] - gz[0] * gx[2], gz[0] * gx[1] - gz[1] * gx[0]];
     const gm = [gx[0], gy[0], gz[0], gx[1], gy[1], gz[1], gx[2], gy[2], gz[2]];
     const gt = gm[0] + gm[4] + gm[8];
     let gqw, gqx, gqy, gqz;
     if (gt > 0) {
       const s = Math.sqrt(gt + 1) * 2;
-      gqw = 0.25 * s; gqx = (gm[7] - gm[5]) / s; gqy = (gm[2] - gm[6]) / s; gqz = (gm[3] - gm[1]) / s;
+      gqw = 0.25 * s;
+      gqx = (gm[7] - gm[5]) / s;
+      gqy = (gm[2] - gm[6]) / s;
+      gqz = (gm[3] - gm[1]) / s;
     } else {
       const s = Math.sqrt(1 + gm[8] - gm[0] - gm[4]) * 2;
-      gqw = (gm[3] - gm[1]) / s; gqx = (gm[2] + gm[6]) / s; gqy = (gm[5] + gm[7]) / s; gqz = 0.25 * s;
+      gqw = (gm[3] - gm[1]) / s;
+      gqx = (gm[2] + gm[6]) / s;
+      gqy = (gm[5] + gm[7]) / s;
+      gqz = 0.25 * s;
     }
     g.ship.rotationQuaternion.set(gqx, gqy, gqz, gqw);
     g.state.velocity.copyFrom(glide.scale(15));
@@ -182,7 +217,12 @@ test("reentry heats up and lands back in atmosphere", async ({ page }) => {
       peakHeat = Math.max(peakHeat, g.state.heat);
       peakSpeed = Math.max(peakSpeed, g.state.velocity.length());
       if (g.state.landed || g.state.altitude < 2) {
-        final = { alt: g.state.altitude, atmo: g.state.atmoDensity, speed: g.state.velocity.length(), landed: g.state.landed };
+        final = {
+          alt: g.state.altitude,
+          atmo: g.state.atmoDensity,
+          speed: g.state.velocity.length(),
+          landed: g.state.landed,
+        };
         break;
       }
     }
@@ -192,11 +232,12 @@ test("reentry heats up and lands back in atmosphere", async ({ page }) => {
   expect(result.peakHeat).toBeGreaterThan(0.2); // reentry heating registered
   expect(result.final).not.toBeNull();
   expect(result.final!.atmo).toBeGreaterThan(0.5); // back deep in atmosphere
+  expectNoErrors(errors);
 });
 
 test("atmosphere shells hand off by altitude and stars skip the glow layer", async ({ page }) => {
-  await page.goto("/", { waitUntil: "networkidle" });
-  await page.waitForFunction(() => (window as any).__game !== undefined, null, { timeout: 30000 });
+  const errors = collectErrors(page);
+  await boot(page);
 
   const ground = await page.evaluate(() => {
     const g = (window as any).__game;
@@ -219,7 +260,9 @@ test("atmosphere shells hand off by altitude and stars skip the glow layer", asy
     const g = (window as any).__game;
     // Teleport above the atmosphere shell (radius 600 + 520) and simulate a few frames.
     const up = g.ship.position.subtract(g.bodies[0].center).normalize();
-    g.ship.position.copyFrom(g.bodies[0].center).addInPlace(up.scale(g.bodies[0].radius + g.bodies[0].atmosphereHeight + 180));
+    g.ship.position
+      .copyFrom(g.bodies[0].center)
+      .addInPlace(up.scale(g.bodies[0].radius + g.bodies[0].atmosphereHeight + 180));
     g.state.velocity.set(0, 0, 0);
     g.state.cruise = 0;
     for (let i = 0; i < 10; i++) g.step(1 / 60);
@@ -237,4 +280,5 @@ test("atmosphere shells hand off by altitude and stars skip the glow layer", asy
   expect(space.sky).toBeLessThan(0.02);
   expect(space.innerEnabled).toBe(false); // sky dome must not render as a haze ball from space
   expect(space.outerEnabled).toBe(true); // limb glow stays available at any distance
+  expectNoErrors(errors);
 });

@@ -78,25 +78,32 @@ with a realistic atmosphere transition (blue sky → thin limb → black space a
 
 ## Structure
 
-- `tech-demo/src/main.ts`: scene setup, HDR pipeline, procedural starfield, chase camera, `__game` debug handle.
-- `tech-demo/src/flight.ts`: ship controller (thrust, drag, heat, landing).
-- `tech-demo/src/planets.ts`: bodies registry (`makePlanet`, `bodyAltitude`, `atmosphereFactor`).
-- `tech-demo/src/sun.ts`: the star Sol (limb-darkened core shader + billboard corona, registers as a body).
-- `tech-demo/src/planetSurface.ts`: procedural terrain (mountain ranges + coastal shaping), seabed, clouds, night lights, baked ocean height field, wet-sand plugin.
-- `tech-demo/src/terrainMaterial.ts`: ground texture sets (+ procedural fallbacks) and the slope/altitude/noise blend plugin (`TerrainTextures`).
-- `tech-demo/src/vegetation.ts`: instanced tree/shrub/grass biome (placement, cutout card geometry, alpha-test materials, wind-sway plugin, per-body instance registry).
-- `tech-demo/src/ocean.ts`: two-layer ocean (global shell + camera patch), surf shading, refraction/depth targets, debug views.
-- `tech-demo/src/oceanWaves.ts`: wave source (sea states, Gerstner set, GLSL chunks, CPU wave samplers for buoyancy).
-- `tech-demo/src/shaderChunks.ts`: shared GLSL helpers (sky palette, water noise).
-- `tech-demo/src/atmosphere.ts`: Rayleigh/Mie outer limb + inner sky dome shaders (altitude cross-fade).
-- `tech-demo/src/shipBuilder.ts`: procedural PBR ship, engines, glow, particles.
-- `tech-demo/src/noise.ts`: seeded value-noise/FBM helpers.
-- `tech-demo/src/hud.ts`: overlay readouts.
-- `tech-demo/tests/smoke.spec.ts`: Playwright tests (load, climb to space, reentry, atmosphere hand-off).
-- `tech-demo/tests/ocean.spec.ts`: ocean tests (patch gating, float/buoyancy determinism, coastal + orbit screenshots).
-- `tech-demo/tests/sun.spec.ts`: sun tests (body wiring/alignment, space + ground + mid-atmosphere screenshots, no-sprite regression).
-- `tech-demo/tests/terrain.spec.ts`: terrain tests (plugin wiring, texture loading, relief statistics, orbit/range/cliff/blend-mask screenshots).
-- `tech-demo/tests/vegetation.spec.ts`: vegetation tests (instance counts/budget, texture loading, placement constraints vs the terrain field, forest/coast/orbit screenshots).
+`src/` is grouped by feature (all paths under `tech-demo/src/`):
+
+- `main.ts`: composition root (engine/scene/pipeline/camera + tick).
+- `app/`: `world.ts` (bodies, pad), `qualityPolicy.ts` (H toggle), `input.ts`
+  (keys/pointer/blur), `cameraRig.ts` (chase cam), `lighting.ts` (star-first rig),
+  `starfield.ts`, `hud.ts`.
+- `flight/`: `flight.ts` (+ `flightTuning.ts` constants), `shipBuilder.ts`,
+  `shipFx.ts` (splash).
+- `world/`: `worldBody.ts` (`IWorldBody` — flight/camera/HUD depend on this, never
+  on concrete bodies), `planets.ts` (bodies registry), `planetArchetypes.ts` (open
+  registry: temperate/barren), `planetSurface.ts` (orchestrator), `sun.ts` (Sol),
+  `atmosphere.ts` (sky/limb shaders), `terrainMaterial.ts` (texture blend plugin),
+  `groundGeometry.ts` (mesh build), `wetSand.ts` (swash plugin), `skyExtras.ts`
+  (clouds + night lights).
+- `ocean/`: `ocean.ts` (orchestrator), `oceanWaves.ts` (Gerstner set + CPU mirrors),
+  `oceanShaders.ts` (vertex/fragment builders), `oceanGeometry.ts` (warp patch),
+  `oceanTargets.ts` (depth/refraction RTTs).
+- `vegetation/`: `vegetation.ts` (orchestrator), `vegetationLook.ts` (tuning),
+  `vegetationTextures.ts` (loaders), `vegetationGeometry.ts` (cards/trunks),
+  `foliageSway.ts` (wind plugin).
+- `common/`: shared kernels — `math.ts`, `rng.ts`, `textures.ts`, `frames.ts`,
+  `materialPlugin.ts` (`PluginRegistry`), `noise.ts`, `shaderChunks.ts`,
+  `heightField.ts` (terrain math), `placement.ts` (Fibonacci scatter + gates).
+  Tests: `tests/helpers.ts` (shared boot/step/place/orbit/error-guard fixtures) +
+  `smoke`/`controls`/`ocean`/`sun`/`terrain`/`vegetation` specs (Playwright, driven
+  via `window.__game.step(dt)`); unit tests live next to sources (`*.test.ts`, vitest).
 
 ## Run
 
@@ -110,8 +117,8 @@ npm run dev
 
 ```powershell
 cd tech-demo
-npm run build
-npx playwright test
+npm test        # typecheck + lint + format:check + unit (vitest)
+npm run test:e2e # build + Playwright (24 tests, headless Chromium)
 ```
 
 Flight tests drive the simulation via `window.__game.step(dt)` (deterministic,

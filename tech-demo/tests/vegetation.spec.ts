@@ -1,4 +1,5 @@
 import { test, expect, Page } from "@playwright/test";
+import { boot, collectErrors, expectNoErrors, orbitAim, placeAt, stepFrames } from "./helpers";
 
 /**
  * Vegetation tests: instanced tree/shrub/grass wiring on Vael (Tethys stays
@@ -9,93 +10,35 @@ import { test, expect, Page } from "@playwright/test";
  * and screenshots allow >= 5 s per state (see repo memory).
  */
 
-type Dir = number[];
-
-const stepFrames = async (page: Page, frames: number, dt: number): Promise<void> => {
-  await page.evaluate(
-    ([n, h]) => {
-      const g = (window as unknown as { __game: any }).__game;
-      for (let i = 0; i < (n as number); i++) g.step(h as number);
-    },
-    [frames, dt]
-  );
+/** Boot + wait for Vael's vegetation bake (thin-instance counts need it). */
+const bootVegetated = async (page: Page): Promise<void> => {
+  await boot(page, true);
 };
 
-const boot = async (page: Page): Promise<void> => {
-  await page.goto("/", { waitUntil: "networkidle" });
-  await page.waitForFunction(
-    () => (window as unknown as { __game?: unknown }).__game !== undefined,
-    null,
-    { timeout: 30000 }
-  );
-  await page.waitForFunction(
-    () => {
-      const v = (window as unknown as { __game: any }).__game.vegetation();
-      return v.vael?.ready === true;
-    },
-    null,
-    { timeout: 60000 }
-  );
+/** Vegetation also treats console warnings as failures (texture fallbacks). */
+const collectVegetationProblems = (page: Page): string[] => {
+  const errors = collectErrors(page);
+  page.on("console", (m) => {
+    if (m.type() === "warning") errors.push(`warning: ${m.text()}`);
+  });
+  return errors;
 };
 
-/** Place a ship (camera follows) at `dir`, `above` sea-radius units up, aimed along `aim`. */
-const placeAtBody = async (page: Page, bodyIndex: number, dir: Dir, aim: Dir, above: number): Promise<void> => {
-  await page.evaluate(
-    ([bi, dAr, aAr, alt]) => {
-      const g = (window as unknown as { __game: any }).__game;
-      const body = g.bodies[bi as number];
-      const V = body.center.constructor as new (x: number, y: number, z: number) => any;
-      const d = new V((dAr as number[])[0], (dAr as number[])[1], (dAr as number[])[2]).normalize();
-      const a = new V((aAr as number[])[0], (aAr as number[])[1], (aAr as number[])[2]).normalize();
-      const probe = g.probe(d.asArray());
-      g.ship.position.copyFrom(body.center).addInPlace(d.scale(probe.seaRadius + (alt as number)));
-      g.state.landed = false;
-      g.state.floating = false;
-      // NB: FromLookDirectionLH aims the local -Z at the target, so negate.
-      const Q = g.ship.rotationQuaternion.constructor as any;
-      g.ship.rotationQuaternion.copyFrom(Q.FromLookDirectionLH(a.scale(-1), d));
-    },
-    [bodyIndex, dir, aim, above]
-  );
-};
-
-/**
- * Nose direction for an orbit view: ~15 deg off straight-down (a straight-down
- * view degenerates the chase camera's horizon-stable up-vector).
- */
-const orbitAim = async (page: Page, dir: Dir): Promise<Dir> =>
-  page.evaluate((d: number[]) => {
-    const ref = Math.abs(d[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
-    const t = [
-      ref[1] * d[2] - ref[2] * d[1],
-      ref[2] * d[0] - ref[0] * d[2],
-      ref[0] * d[1] - ref[1] * d[0],
-    ];
-    const tl = Math.hypot(t[0], t[1], t[2]) || 1;
-    const v = [
-      -d[0] * 0.966 + (t[0] / tl) * 0.259,
-      -d[1] * 0.966 + (t[1] / tl) * 0.259,
-      -d[2] * 0.966 + (t[2] / tl) * 0.259,
-    ];
-    const l = Math.hypot(v[0], v[1], v[2]) || 1;
-    return [v[0] / l, v[1] / l, v[2] / l];
-  }, dir);
+/** Vael-only placement (all vegetation shots are on body 0). */
+const placeAtVael = async (page: Page, dir: number[], aim: number[], above: number): Promise<void> =>
+  placeAt(page, 0, dir, aim, above);
 
 test("vegetation wiring: Vael wooded, Tethys bare, textures ready, no shader errors", async ({ page }) => {
   test.setTimeout(180000);
-  const problems: string[] = [];
-  page.on("pageerror", (e) => problems.push(`pageerror: ${e.message}`));
-  page.on("console", (m) => {
-    if (m.type() === "error" || m.type() === "warning") problems.push(`${m.type()}: ${m.text()}`);
-  });
+  const problems = collectVegetationProblems(page);
 
-  await boot(page);
+  await bootVegetated(page);
 
   const data = await page.evaluate(() => {
     const g = (window as unknown as { __game: any }).__game;
     const v = g.vegetation();
     const vegMeshes = g.scene.meshes.filter(
-      (m: { name?: string }) => typeof m.name === "string" && m.name.includes("-veg-")
+      (m: { name?: string }) => typeof m.name === "string" && m.name.includes("-veg-"),
     );
     return {
       vael: v.vael,
@@ -108,8 +51,15 @@ test("vegetation wiring: Vael wooded, Tethys bare, textures ready, no shader err
 
   expect(data.tethys).toBeNull();
   const s = data.vael as {
-    trees: number; broadleaf: number; conifer: number; shrubs: number; grass: number;
-    tris: number; budget: number; ready: boolean; fallbacks: string[];
+    trees: number;
+    broadleaf: number;
+    conifer: number;
+    shrubs: number;
+    grass: number;
+    tris: number;
+    budget: number;
+    ready: boolean;
+    fallbacks: string[];
   };
   console.log("vael vegetation", JSON.stringify(s));
   expect(s).toBeTruthy();
@@ -127,6 +77,9 @@ test("vegetation wiring: Vael wooded, Tethys bare, textures ready, no shader err
 
   const shaderProblems = problems.filter((p) => /shader|glsl|compil|uniform|attribute|effect/i.test(p));
   expect(shaderProblems).toEqual([]);
+  // Warnings stay informational here (headless SwiftShader emits benign
+  // "GPU stall due to ReadPixels" performance warnings); errors must be zero.
+  expectNoErrors(problems.filter((p) => !p.startsWith("warning: ")));
 
   // Wind sway: the plugin must inject its uniform into the foliage materials
   // (and must NOT touch the bark).
@@ -134,8 +87,7 @@ test("vegetation wiring: Vael wooded, Tethys bare, textures ready, no shader err
     const g = (window as unknown as { __game: any }).__game;
     const foliage = g.scene.getMeshByName("Vael Prime-veg-canopy-a");
     const bark = g.scene.getMeshByName("Vael Prime-veg-trunk-a");
-    const has = (m: any): boolean =>
-      !!m?.material?.getEffect?.()?.vertexSourceCode?.includes("uSwayTime");
+    const has = (m: any): boolean => !!m?.material?.getEffect?.()?.vertexSourceCode?.includes("uSwayTime");
     return { foliage: has(foliage), bark: has(bark) };
   });
   expect(sway.foliage).toBe(true);
@@ -144,7 +96,8 @@ test("vegetation wiring: Vael wooded, Tethys bare, textures ready, no shader err
 
 test("vegetation placement: land only, under the lines, off slopes and poles", async ({ page }) => {
   test.setTimeout(180000);
-  await boot(page);
+  const errors = collectErrors(page);
+  await bootVegetated(page);
 
   const report = await page.evaluate(() => {
     const g = (window as unknown as { __game: any }).__game;
@@ -165,20 +118,26 @@ test("vegetation placement: land only, under the lines, off slopes and poles", a
       const lim = st.limits[layer];
       const dirs = g.vegetationSample(0, layer, n) as number[][];
       const bad: string[] = [];
-      let maxSlope = 0, minH = 9, maxAbsY = 0;
+      let maxSlope = 0,
+        minH = 9,
+        maxAbsY = 0;
       const eps = 0.0035;
       const slopeAt = (d: number[]): number => {
         const ref = Math.abs(d[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
         const t1 = nrm(cross(d, ref));
         const t2 = nrm(cross(t1, d));
-        const s1 = Math.abs(
-          g.probe([d[0] + t1[0] * eps, d[1] + t1[1] * eps, d[2] + t1[2] * eps]).h -
-          g.probe([d[0] - t1[0] * eps, d[1] - t1[1] * eps, d[2] - t1[2] * eps]).h
-        ) / (2 * eps);
-        const s2 = Math.abs(
-          g.probe([d[0] + t2[0] * eps, d[1] + t2[1] * eps, d[2] + t2[2] * eps]).h -
-          g.probe([d[0] - t2[0] * eps, d[1] - t2[1] * eps, d[2] - t2[2] * eps]).h
-        ) / (2 * eps);
+        const s1 =
+          Math.abs(
+            g.probe([d[0] + t1[0] * eps, d[1] + t1[1] * eps, d[2] + t1[2] * eps]).h -
+              g.probe([d[0] - t1[0] * eps, d[1] - t1[1] * eps, d[2] - t1[2] * eps]).h,
+          ) /
+          (2 * eps);
+        const s2 =
+          Math.abs(
+            g.probe([d[0] + t2[0] * eps, d[1] + t2[1] * eps, d[2] + t2[2] * eps]).h -
+              g.probe([d[0] - t2[0] * eps, d[1] - t2[1] * eps, d[2] - t2[2] * eps]).h,
+          ) /
+          (2 * eps);
         return Math.hypot(s1, s2);
       };
       for (const d of dirs) {
@@ -206,11 +165,13 @@ test("vegetation placement: land only, under the lines, off slopes and poles", a
   expect(report.shrubs.count).toBeGreaterThanOrEqual(150);
   expect(report.shrubs.bad).toEqual([]);
   expect(report.shrubs.maxSlope).toBeLessThanOrEqual(report.shrubs.lim.slope + 0.2);
+  expectNoErrors(errors);
 });
 
 test("vegetation screenshots: forest, coast, orbit", async ({ page }) => {
   test.setTimeout(300000);
-  await boot(page);
+  const errors = collectErrors(page);
+  await bootVegetated(page);
 
   // Hide the cloud deck so the ground is readable in the close shots.
   await page.evaluate(() => {
@@ -239,7 +200,9 @@ test("vegetation screenshots: forest, coast, orbit", async ({ page }) => {
     // Densest tree cluster on the day side (neighbours within ~3.5 deg), biased
     // toward brighter ground so the shot is not taken near the terminator.
     const cosLim = Math.cos(0.06);
-    let cluster = dirs[0], best = -1, dayDirs = 0;
+    let cluster = dirs[0],
+      best = -1,
+      dayDirs = 0;
     for (const d of dirs) {
       const day = dot(d, sunArr);
       if (day < 0.45) continue;
@@ -247,17 +210,16 @@ test("vegetation screenshots: forest, coast, orbit", async ({ page }) => {
       let n = 0;
       for (const o of dirs) if (dot(d, o) > cosLim) n++;
       const score = n * (0.4 + 0.6 * day);
-      if (score > best) { best = score; cluster = d; }
+      if (score > best) {
+        best = score;
+        cluster = d;
+      }
     }
 
     // Stand back ~5 deg along an arbitrary tangent and look at the cluster.
     const ref = Math.abs(cluster[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
     const t = nrm(cross(ref, cluster));
-    const view = nrm([
-      cluster[0] + t[0] * 0.09,
-      cluster[1] + t[1] * 0.09,
-      cluster[2] + t[2] * 0.09,
-    ]);
+    const view = nrm([cluster[0] + t[0] * 0.09, cluster[1] + t[1] * 0.09, cluster[2] + t[2] * 0.09]);
     const aim = nrm([
       cluster[0] - view[0] * dot(cluster, view),
       cluster[1] - view[1] * dot(cluster, view),
@@ -265,21 +227,21 @@ test("vegetation screenshots: forest, coast, orbit", async ({ page }) => {
     ]);
 
     // Coast: the day-side tree closest to the waterline; aim downhill.
-    let coast = dirs[0], bestOver = 9;
+    let coast = dirs[0],
+      bestOver = 9;
     for (const d of dirs) {
       if (dot(d, sunArr) < 0.35) continue;
       const over = probe(d).h - st.waterLevel;
-      if (over > 0.006 && over < bestOver) { bestOver = over; coast = d; }
+      if (over > 0.006 && over < bestOver) {
+        bestOver = over;
+        coast = d;
+      }
     }
     const cRef = Math.abs(coast[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
     const ct = nrm(cross(cRef, coast));
     const eps = 0.01;
-    const hPlus = probe([
-      coast[0] + ct[0] * eps, coast[1] + ct[1] * eps, coast[2] + ct[2] * eps,
-    ]).h;
-    const hMinus = probe([
-      coast[0] - ct[0] * eps, coast[1] - ct[1] * eps, coast[2] - ct[2] * eps,
-    ]).h;
+    const hPlus = probe([coast[0] + ct[0] * eps, coast[1] + ct[1] * eps, coast[2] + ct[2] * eps]).h;
+    const hMinus = probe([coast[0] - ct[0] * eps, coast[1] - ct[1] * eps, coast[2] - ct[2] * eps]).h;
     const sign = hPlus < hMinus ? 1 : -1;
     const coastAim = [ct[0] * sign, ct[1] * sign, ct[2] * sign];
     // Stand a touch inland so the foreground is not a single trunk at the lens.
@@ -296,20 +258,21 @@ test("vegetation screenshots: forest, coast, orbit", async ({ page }) => {
   expect(targets.dayDirs).toBeGreaterThan(30);
 
   // Forest close-up: over a dense cluster on the day side, looking along the horizon.
-  await placeAtBody(page, 0, targets.view, targets.aim, 20);
+  await placeAtVael(page, targets.view, targets.aim, 20);
   await stepFrames(page, 120, 1 / 60);
   await page.waitForTimeout(6000);
   await page.screenshot({ path: "test-results/vegetation-forest.png" });
 
   // Coast flyby: low over the shoreline, nose toward the water.
-  await placeAtBody(page, 0, targets.coastView, targets.coastAim, 14);
+  await placeAtVael(page, targets.coastView, targets.coastAim, 14);
   await stepFrames(page, 120, 1 / 60);
   await page.waitForTimeout(6000);
   await page.screenshot({ path: "test-results/vegetation-coast.png" });
 
   // Orbit sanity: vegetation must not disturb the planet silhouette.
-  await placeAtBody(page, 0, targets.cluster, await orbitAim(page, targets.cluster), 820);
+  await placeAtVael(page, targets.cluster, await orbitAim(page, targets.cluster), 820);
   await stepFrames(page, 400, 1 / 60);
   await page.waitForTimeout(7000);
   await page.screenshot({ path: "test-results/vegetation-orbit.png" });
+  expectNoErrors(errors);
 });

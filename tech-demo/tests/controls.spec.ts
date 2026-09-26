@@ -1,20 +1,18 @@
-import { test, expect, Page } from "@playwright/test";
+import { test, expect } from "@playwright/test";
+import { boot, collectErrors, expectNoErrors } from "./helpers";
 
 // Deterministic flight-control tests. Like the smoke tests, these drive the
 // simulation through window.__game.step(dt): software-GL rendering is far too
 // slow here for realtime keyboard flight, and step() makes results reproducible.
 
-async function boot(page: Page): Promise<void> {
-  await page.goto("/", { waitUntil: "networkidle" });
-  await page.waitForFunction(() => (window as any).__game !== undefined, null, { timeout: 30000 });
-}
-
 test("idle: ship rests on the pad without jitter or drift", async ({ page }) => {
+  const errors = collectErrors(page);
   await boot(page);
   const samples = await page.evaluate(() => {
     const g = (window as any).__game;
     const out: { p: number[]; q: number[]; alt: number; speed: number; landed: boolean }[] = [];
-    for (let i = 0; i < 720; i++) { // 12 simulated seconds, hands off
+    for (let i = 0; i < 720; i++) {
+      // 12 simulated seconds, hands off
       g.step(1 / 60);
       if (i % 30 === 29) {
         out.push({
@@ -39,9 +37,11 @@ test("idle: ship rests on the pad without jitter or drift", async ({ page }) => 
   expect(range(tail.map((s) => s.alt))).toBeLessThan(0.2);
   expect(Math.max(...tail.map((s) => s.speed))).toBeLessThan(0.5);
   expect(tail.every((s) => s.landed)).toBe(true);
+  expectNoErrors(errors);
 });
 
 test("takeoff: pitch up + throttle lifts off the pad", async ({ page }) => {
+  const errors = collectErrors(page);
   await boot(page);
   const res = await page.evaluate(() => {
     const g = (window as any).__game;
@@ -56,31 +56,36 @@ test("takeoff: pitch up + throttle lifts off the pad", async ({ page }) => {
   expect(res.alt).toBeGreaterThan(10);
   expect(res.landed).toBe(false);
   expect(res.speed).toBeGreaterThan(20);
+  expectNoErrors(errors);
 });
 
 test("flight is frame-rate independent", async ({ page }) => {
+  const errors = collectErrors(page);
   const run = async (dt: number, frames: number) => {
     await boot(page);
-    const res = await page.evaluate(({ dt, frames }) => {
-      const g = (window as any).__game;
-      const V = g.state.velocity.constructor as new (x: number, y: number, z: number) => any;
-      // Clean space start so ground contact cannot skew the comparison.
-      const up = g.ship.position.subtract(g.bodies[0].center).normalize();
-      g.ship.position.copyFrom(g.bodies[0].center).addInPlace(up.scale(600 + 150));
-      g.state.velocity.set(0, 0, 0);
-      g.state.cruise = 50;
-      g.state.landed = false;
-      g.input["a"] = true;
-      g.input["arrowup"] = true;
-      for (let i = 0; i < frames; i++) g.step(dt);
-      g.input["a"] = false;
-      g.input["arrowup"] = false;
-      return {
-        pos: g.ship.position.asArray() as number[],
-        nose: new V(0, 0, 1).applyRotationQuaternion(g.ship.rotationQuaternion).asArray() as number[],
-        speed: g.state.velocity.length() as number,
-      };
-    }, { dt, frames });
+    const res = await page.evaluate(
+      ({ dt, frames }) => {
+        const g = (window as any).__game;
+        const V = g.state.velocity.constructor as new (x: number, y: number, z: number) => any;
+        // Clean space start so ground contact cannot skew the comparison.
+        const up = g.ship.position.subtract(g.bodies[0].center).normalize();
+        g.ship.position.copyFrom(g.bodies[0].center).addInPlace(up.scale(600 + 150));
+        g.state.velocity.set(0, 0, 0);
+        g.state.cruise = 50;
+        g.state.landed = false;
+        g.input["a"] = true;
+        g.input["arrowup"] = true;
+        for (let i = 0; i < frames; i++) g.step(dt);
+        g.input["a"] = false;
+        g.input["arrowup"] = false;
+        return {
+          pos: g.ship.position.asArray() as number[],
+          nose: new V(0, 0, 1).applyRotationQuaternion(g.ship.rotationQuaternion).asArray() as number[],
+          speed: g.state.velocity.length() as number,
+        };
+      },
+      { dt, frames },
+    );
     await page.reload();
     return res;
   };
@@ -92,12 +97,14 @@ test("flight is frame-rate independent", async ({ page }) => {
   const dist = Math.hypot(
     fine.pos[0] - coarse.pos[0],
     fine.pos[1] - coarse.pos[1],
-    fine.pos[2] - coarse.pos[2]
+    fine.pos[2] - coarse.pos[2],
   );
   expect(dist).toBeLessThan(15);
+  expectNoErrors(errors);
 });
 
 test("steering: pitch, banked turns, no barrel rolls, auto-level", async ({ page }) => {
+  const errors = collectErrors(page);
   await boot(page);
   const res = await page.evaluate(() => {
     const g = (window as any).__game;
@@ -121,10 +128,11 @@ test("steering: pitch, banked turns, no barrel rolls, auto-level", async ({ page
     const dot1 = fwd().dot(planetUp());
 
     // Yaw: A turns left and banks, without barrel-rolling.
-    const left0 = V.Cross(up(), fwd()).negate(); // ship-left before the turn
+    const left0 = (V as unknown as { Cross: (a: unknown, b: unknown) => any }).Cross(up(), fwd()).negate(); // ship-left before the turn
     let maxBank = 0;
     g.input["a"] = true;
-    for (let i = 0; i < 60; i++) { // 1 s of turning
+    for (let i = 0; i < 60; i++) {
+      // 1 s of turning
       g.step(1 / 60);
       maxBank = Math.max(maxBank, Math.abs(g.bankDeg()));
     }
@@ -143,9 +151,11 @@ test("steering: pitch, banked turns, no barrel rolls, auto-level", async ({ page
   expect(res.maxBank).toBeLessThan(50); // ...but never barrel-rolled
   expect(res.bankHeld).toBeLessThan(0); // left turn = left bank (right wing up)
   expect(Math.abs(res.bankAfter)).toBeLessThan(5); // auto-level returns wings level
+  expectNoErrors(errors);
 });
 
 test("manual roll with E and auto-level on release", async ({ page }) => {
+  const errors = collectErrors(page);
   await boot(page);
   const res = await page.evaluate(() => {
     const g = (window as any).__game;
@@ -165,20 +175,25 @@ test("manual roll with E and auto-level on release", async ({ page }) => {
   });
   expect(res.rolled).toBeGreaterThan(20); // E rolled right (+ = right wing down)
   expect(Math.abs(res.after)).toBeLessThan(5); // wings level again
+  expectNoErrors(errors);
 });
 
 test("pointer steering: cursor offset drives the stick", async ({ page }) => {
+  const errors = collectErrors(page);
   await boot(page);
   const res = await page.evaluate(() => {
     const g = (window as any).__game;
-    g.pointer.x = 0.8; g.pointer.y = 0; // cursor right of center = turn right
+    g.pointer.x = 0.8;
+    g.pointer.y = 0; // cursor right of center = turn right
     for (let i = 0; i < 30; i++) g.step(1 / 60);
     const yawRight = g.controls.yaw;
-    g.pointer.x = 0; g.pointer.y = 0.5; // cursor above center = nose up
+    g.pointer.x = 0;
+    g.pointer.y = 0.5; // cursor above center = nose up
     for (let i = 0; i < 30; i++) g.step(1 / 60);
     const pitchUp = g.controls.pitch;
     const yawBack = g.controls.yaw;
-    g.pointer.x = 0; g.pointer.y = 0; // recenter = hands off
+    g.pointer.x = 0;
+    g.pointer.y = 0; // recenter = hands off
     for (let i = 0; i < 90; i++) g.step(1 / 60);
     return { yawRight, pitchUp, yawBack, yawCentered: g.controls.yaw, pitchCentered: g.controls.pitch };
   });
@@ -187,9 +202,11 @@ test("pointer steering: cursor offset drives the stick", async ({ page }) => {
   expect(Math.abs(res.yawBack)).toBeLessThan(0.05); // yaw eased back as pointer moved up
   expect(Math.abs(res.yawCentered)).toBeLessThan(0.05);
   expect(Math.abs(res.pitchCentered)).toBeLessThan(0.05);
+  expectNoErrors(errors);
 });
 
 test("real mouse events steer via pointer position", async ({ page }) => {
+  const errors = collectErrors(page);
   await boot(page);
   const vp = page.viewportSize();
   expect(vp).not.toBeNull();
@@ -207,9 +224,11 @@ test("real mouse events steer via pointer position", async ({ page }) => {
     return Math.abs(g.controls.yaw as number);
   });
   expect(yawBack).toBeLessThan(0.05);
+  expectNoErrors(errors);
 });
 
 test("throttle, boost and brake drive the cruise speed", async ({ page }) => {
+  const errors = collectErrors(page);
   await boot(page);
   const res = await page.evaluate(() => {
     const g = (window as any).__game;
@@ -230,9 +249,11 @@ test("throttle, boost and brake drive the cruise speed", async ({ page }) => {
   expect(res.cruised).toBeGreaterThan(100); // ~120 after 2 s at +60/s
   expect(res.braked).toBeLessThan(50); // brake worked even while thrusting
   expect(res.boosted).toBeGreaterThan(res.braked + 400); // boost ramps at 260/s
+  expectNoErrors(errors);
 });
 
 test("window blur clears stuck keys", async ({ page }) => {
+  const errors = collectErrors(page);
   await boot(page);
   await page.keyboard.down("w");
   const held = await page.evaluate(() => (window as any).__game.input["w"] === true);
@@ -241,4 +262,5 @@ test("window blur clears stuck keys", async ({ page }) => {
   const cleared = await page.evaluate(() => !(window as any).__game.input["w"]);
   expect(cleared).toBe(true);
   await page.keyboard.up("w");
+  expectNoErrors(errors);
 });

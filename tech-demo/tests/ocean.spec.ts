@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { boot, collectErrors, expectNoErrors, stepFrames } from "./helpers";
 
 /**
  * Ocean tests. Flight/buoyancy run through `__game.step` (deterministic, no
@@ -20,7 +21,8 @@ const INSTALL_HELPERS = (): void => {
   const g = (window as unknown as { __game: any }).__game;
   const body = g.bodies[0];
   const V = body.center.constructor as new (x: number, y: number, z: number) => any;
-  const probe = (d: number[]) => g.probe(d) as { h: number; water: boolean; waterLevel: number; seaRadius: number };
+  const probe = (d: number[]) =>
+    g.probe(d) as { h: number; water: boolean; waterLevel: number; seaRadius: number };
 
   const sunToward = (): any => {
     const sun = g.scene.getLightByName("sun");
@@ -67,7 +69,10 @@ const INSTALL_HELPERS = (): void => {
     offshore(c: Coast, dist: number): number[] {
       const dir = new V(c.dir[0], c.dir[1], c.dir[2]).normalize();
       const landward = new V(c.landward[0], c.landward[1], c.landward[2]).normalize();
-      return dir.subtract(landward.scale(dist / body.radius)).normalize().asArray();
+      return dir
+        .subtract(landward.scale(dist / body.radius))
+        .normalize()
+        .asArray();
     },
     /** Place the ship at a sea point, nose aimed along `aimDir`. */
     placeAt(dirArr: number[], aimDir: number[], above: number): void {
@@ -91,19 +96,9 @@ const INSTALL_HELPERS = (): void => {
   (window as unknown as { __ocean: typeof api }).__ocean = api;
 };
 
-const stepFrames = async (page: import("@playwright/test").Page, frames: number, dt: number): Promise<void> => {
-  await page.evaluate(
-    ([n, h]) => {
-      const g = (window as unknown as { __game: any }).__game;
-      for (let i = 0; i < (n as number); i++) g.step(h as number);
-    },
-    [frames, dt]
-  );
-};
-
 test("ocean attaches, patch follows altitude, ship floats on waves", async ({ page }) => {
-  await page.goto("/", { waitUntil: "networkidle" });
-  await page.waitForFunction(() => (window as unknown as { __game?: unknown }).__game !== undefined, null, { timeout: 30000 });
+  const errors = collectErrors(page);
+  await boot(page);
   await page.evaluate(INSTALL_HELPERS);
 
   const gating = await page.evaluate(() => {
@@ -121,13 +116,15 @@ test("ocean attaches, patch follows altitude, ship floats on waves", async ({ pa
   expect(gating.low).toBe(true);
   expect(gating.high).toBe(false);
 
-  const coast = await page.evaluate(() => (window as unknown as { __ocean: any }).__ocean.findCoast(0.02, 0.02));
+  const coast = await page.evaluate(() =>
+    (window as unknown as { __ocean: any }).__ocean.findCoast(0.02, 0.02),
+  );
   expect(coast).not.toBeNull();
 
   // Drop the ship onto the sea (soft landing) and let it float.
   await page.evaluate(
     (c) => (window as unknown as { __ocean: any }).__ocean.placeAt(c.dir, c.landward, 6),
-    coast
+    coast,
   );
   await stepFrames(page, 300, 1 / 60);
   const floated = await page.evaluate(() => {
@@ -156,22 +153,28 @@ test("ocean attaches, patch follows altitude, ship floats on waves", async ({ pa
   expect(stats.vael.waveCount).toBeGreaterThan(4);
   expect(stats.vael.patchVerts).toBe(9409);
   console.log(JSON.stringify({ gating, floated, drift, stats }, null, 2));
+  expectNoErrors(errors);
 });
 
 test("coastal + open-water screenshots", async ({ page }) => {
   test.setTimeout(240000);
-  await page.goto("/", { waitUntil: "networkidle" });
-  await page.waitForFunction(() => (window as unknown as { __game?: unknown }).__game !== undefined, null, { timeout: 30000 });
+  const errors = collectErrors(page);
+  await boot(page);
   await page.evaluate(INSTALL_HELPERS);
 
   // Surf view: float just offshore and look back at the beach. NB: the cloud
   // deck sits only ~23 u above the surface, so shots must be taken from below.
-  const coast = await page.evaluate(() => (window as unknown as { __ocean: any }).__ocean.findCoast(0.02, 0.02));
+  const coast = await page.evaluate(() =>
+    (window as unknown as { __ocean: any }).__ocean.findCoast(0.02, 0.02),
+  );
   expect(coast).not.toBeNull();
-  const off = await page.evaluate((c) => (window as unknown as { __ocean: any }).__ocean.offshore(c, 60), coast);
+  const off = await page.evaluate(
+    (c) => (window as unknown as { __ocean: any }).__ocean.offshore(c, 60),
+    coast,
+  );
   await page.evaluate(
     ([d, l]) => (window as unknown as { __ocean: any }).__ocean.placeAt(d as number[], l as number[], 3),
-    [off, coast.landward]
+    [off, coast.landward],
   );
   await stepFrames(page, 240, 1 / 60);
   await page.waitForTimeout(5000);
@@ -182,10 +185,13 @@ test("coastal + open-water screenshots", async ({ page }) => {
   // Open water: float on a deep basin looking along the waves.
   const deep = await page.evaluate(() => (window as unknown as { __ocean: any }).__ocean.findDeep(0.25));
   if (deep) {
-    const tangent = await page.evaluate((c) => (window as unknown as { __ocean: any }).__ocean.offshore(c, 250), deep);
+    const tangent = await page.evaluate(
+      (c) => (window as unknown as { __ocean: any }).__ocean.offshore(c, 250),
+      deep,
+    );
     await page.evaluate(
       ([d, a]) => (window as unknown as { __ocean: any }).__ocean.placeAt(d as number[], a as number[], 3),
-      [deep.dir, tangent]
+      [deep.dir, tangent],
     );
     await stepFrames(page, 240, 1 / 60);
     await page.waitForTimeout(5000);
@@ -201,4 +207,5 @@ test("coastal + open-water screenshots", async ({ page }) => {
   }, coast);
   await page.waitForTimeout(7000);
   await page.screenshot({ path: "test-results/ocean-orbit.png" });
+  expectNoErrors(errors);
 });

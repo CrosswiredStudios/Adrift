@@ -1,4 +1,5 @@
 import { test, expect, Page } from "@playwright/test";
+import { boot, collectErrors, expectNoErrors, stepFrames } from "./helpers";
 
 /**
  * Sun (Sol) tests: the star is a real body - aligned with the scene light,
@@ -9,24 +10,10 @@ import { test, expect, Page } from "@playwright/test";
  * allow >= 6 s per screenshot state (see repo memory).
  */
 
-const stepFrames = async (page: Page, frames: number, dt: number): Promise<void> => {
-  await page.evaluate(
-    ([n, h]) => {
-      const g = (window as unknown as { __game: any }).__game;
-      for (let i = 0; i < (n as number); i++) g.step(h as number);
-    },
-    [frames, dt]
-  );
-};
-
-const boot = async (page: Page): Promise<void> => {
-  await page.goto("/", { waitUntil: "networkidle" });
-  await page.waitForFunction(
-    () => (window as unknown as { __game?: unknown }).__game !== undefined,
-    null,
-    { timeout: 30000 }
-  );
-  await page.waitForTimeout(3000); // let the first frames settle (textures load async)
+/** Settle helper: the first frames load textures async, so let them land. */
+const settle = async (page: Page): Promise<void> => {
+  await boot(page);
+  await page.waitForTimeout(3000);
 };
 
 /** Hide Vael's cloud deck so it never sits between the camera and the sun. */
@@ -52,7 +39,10 @@ const placeInDeepSpace = async (page: Page): Promise<void> => {
     const ref = Math.abs(u.y) < 0.9 ? new V(0, 1, 0) : new V(1, 0, 0);
     const side = V.Cross(u, ref).normalize();
     const off = (18 * Math.PI) / 180;
-    const aim = u.scale(Math.cos(off)).addInPlace(side.scale(Math.sin(off))).normalize();
+    const aim = u
+      .scale(Math.cos(off))
+      .addInPlace(side.scale(Math.sin(off)))
+      .normalize();
     const upAxis = V.Cross(side, aim).normalize();
     g.ship.position.copyFrom(g.bodies[0].center).addInPlace(u.scale(600 + 520 + 400));
     g.state.landed = false;
@@ -80,7 +70,10 @@ const placeLow = async (page: Page, altAbove: number): Promise<{ sunElevDeg: num
     const ref = Math.abs(u.y) < 0.9 ? new V(0, 1, 0) : new V(1, 0, 0);
     const side = V.Cross(u, ref).normalize();
     const elev = (8 * Math.PI) / 180;
-    const upDir = u.scale(Math.sin(elev)).addInPlace(side.scale(Math.cos(elev))).normalize();
+    const upDir = u
+      .scale(Math.sin(elev))
+      .addInPlace(side.scale(Math.cos(elev)))
+      .normalize();
     g.ship.position.copyFrom(g.bodies[0].center).addInPlace(upDir.scale(600 + (alt as number)));
     g.state.landed = false;
     g.state.floating = false;
@@ -94,7 +87,9 @@ const placeLow = async (page: Page, altAbove: number): Promise<{ sunElevDeg: num
   }, altAbove);
 
 /** Camera-forward alignment with the sun + a couple of state readouts. */
-const viewState = async (page: Page): Promise<{ dot: number; inFrustum: boolean; atmo: number; sky: number }> =>
+const viewState = async (
+  page: Page,
+): Promise<{ dot: number; inFrustum: boolean; atmo: number; sky: number }> =>
   page.evaluate(() => {
     const g = (window as unknown as { __game: any }).__game;
     const toSun = g.sun.body.center.subtract(g.camera.position).normalize();
@@ -109,7 +104,8 @@ const viewState = async (page: Page): Promise<{ dot: number; inFrustum: boolean;
 
 test("Sol wiring: real aligned body, starfield clearance, sprite gone", async ({ page }) => {
   test.setTimeout(120000);
-  await boot(page);
+  const errors = collectErrors(page);
+  await settle(page);
 
   const data = await page.evaluate(() => {
     const g = (window as unknown as { __game: any }).__game;
@@ -128,7 +124,7 @@ test("Sol wiring: real aligned body, starfield clearance, sprite gone", async ({
       radius: sol.body.radius,
       dist,
       alignDot: dirFromOrigin.dot(toward),
-      angularDeg: ((2 * Math.atan(sol.body.radius / dist)) * 180) / Math.PI,
+      angularDeg: (2 * Math.atan(sol.body.radius / dist) * 180) / Math.PI,
       coreEnabled: !!core?.isEnabled(),
       coronaEnabled: !!corona?.isEnabled(),
       coreMat: core?.material?.getClassName?.(),
@@ -164,20 +160,17 @@ test("Sol wiring: real aligned body, starfield clearance, sprite gone", async ({
   // Nav key 3 selects the star as the HUD target.
   await page.keyboard.press("3");
   const target = await page.evaluate(
-    () => (window as unknown as { __game: any }).__game.state.target?.name ?? null
+    () => (window as unknown as { __game: any }).__game.state.target?.name ?? null,
   );
   expect(target).toBe("Sol");
+  expectNoErrors(errors);
 });
 
 test("giant sun from deep space", async ({ page }) => {
   test.setTimeout(180000);
-  const problems: string[] = [];
-  page.on("pageerror", (e) => problems.push(`pageerror: ${e.message}`));
-  page.on("console", (m) => {
-    if (m.type() === "error") problems.push(`console: ${m.text()}`);
-  });
+  const problems = collectErrors(page);
 
-  await boot(page);
+  await settle(page);
   await clearSkies(page);
   await placeInDeepSpace(page);
   await stepFrames(page, 240, 1 / 60);
@@ -191,13 +184,14 @@ test("giant sun from deep space", async ({ page }) => {
   expect(view.inFrustum).toBe(true);
   expect(view.atmo).toBeLessThan(0.05);
   await page.screenshot({ path: "test-results/sun-space.png" });
-  expect(problems).toEqual([]);
+  expectNoErrors(problems);
 });
 
 test("sun from the ground and mid-atmosphere: glare aligns, no double sun", async ({ page }) => {
   test.setTimeout(180000);
+  const errors = collectErrors(page);
 
-  await boot(page);
+  await settle(page);
   await clearSkies(page);
 
   // Ground view: deep in the air, dome at full glare, sun low over the terrain.
@@ -223,4 +217,5 @@ test("sun from the ground and mid-atmosphere: glare aligns, no double sun", asyn
   expect(midView.sky).toBeLessThan(0.9); // genuinely mid-handoff
   expect(midView.dot).toBeGreaterThan(0.8);
   await page.screenshot({ path: "test-results/sun-midatmo.png" });
+  expectNoErrors(errors);
 });
