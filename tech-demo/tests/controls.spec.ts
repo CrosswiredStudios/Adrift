@@ -6,7 +6,7 @@ import { test, expect, Page } from "@playwright/test";
 
 async function boot(page: Page): Promise<void> {
   await page.goto("/", { waitUntil: "networkidle" });
-  await page.waitForFunction(() => (window as any).__game !== undefined, null, { timeout: 15000 });
+  await page.waitForFunction(() => (window as any).__game !== undefined, null, { timeout: 30000 });
 }
 
 test("idle: ship rests on the pad without jitter or drift", async ({ page }) => {

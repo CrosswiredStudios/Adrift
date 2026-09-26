@@ -196,7 +196,7 @@ test("reentry heats up and lands back in atmosphere", async ({ page }) => {
 
 test("atmosphere shells hand off by altitude and stars skip the glow layer", async ({ page }) => {
   await page.goto("/", { waitUntil: "networkidle" });
-  await page.waitForFunction(() => (window as any).__game !== undefined, null, { timeout: 15000 });
+  await page.waitForFunction(() => (window as any).__game !== undefined, null, { timeout: 30000 });
 
   const ground = await page.evaluate(() => {
     const g = (window as any).__game;

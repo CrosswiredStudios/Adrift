@@ -22,6 +22,8 @@ export interface FlightState {
   floating: boolean;
   /** Smoothed radius of the water surface the ship rides (bob damping). */
   floatR: number;
+  /** Body whose sea `floatR` tracks (the value is meaningless across bodies). */
+  floatBody?: Body | null;
   rig: ShipRig | null;
 }
 
@@ -302,6 +304,13 @@ export function updateShip(
     const dirNow = toShipNow.scale(1 / distNow);
     const surfNow = surfaceRadius(nearest, dirNow);
     const overWater = isOverWater(nearest, dirNow);
+    // The float height is only valid for the body whose sea it tracks. Arriving
+    // over another body's water would otherwise inherit the previous planet's
+    // waterline and snap the ship to a phantom altitude until the tracker decays.
+    if (state.floatBody !== nearest) {
+      state.floatR = 0;
+      state.floatBody = nearest;
+    }
     let restR = surfNow;
     if (overWater) {
       const waveR = waterSurfaceRadius(nearest, dirNow);

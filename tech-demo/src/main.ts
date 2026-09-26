@@ -3,6 +3,7 @@ import { Constants } from "@babylonjs/core/Engines/constants";
 import { makePlanet, atmosphereFactor, bodyAltitude, surfaceRadius, terrainHeightAt, isOverWater, Body } from "./planets";
 import { createShip, updateShip, FlightState, SteerState, bankAngle } from "./flight";
 import { updateHud } from "./hud";
+import { TerrainHandle } from "./terrainMaterial";
 
 const canvas = document.getElementById("scene") as HTMLCanvasElement;
 const hud = document.getElementById("hud") as HTMLElement;
@@ -140,13 +141,23 @@ const vael = makePlanet(scene, {
   name: "Vael Prime", position: new Vector3(0, 0, 0), radius: 600,
   color: new Color3(0.3, 0.5, 0.28), atmosphereHeight: 520,
   atmosphereColor: new Color3(0.35, 0.6, 1), skyColor: new Color3(0.5, 0.75, 1), mu: 90000,
-  seed: 1337, relief: 0.022, waterLevel: -0.05, cloudCoverage: 0.5,
+  seed: 1337, relief: 0.045, waterLevel: -0.05, cloudCoverage: 0.5,
+  terrain: {
+    baseColor: "/textures/terrain/grass_color.jpg",
+    baseNormal: "/textures/terrain/grass_normal.jpg",
+  },
 });
 const tethys = makePlanet(scene, {
   name: "Tethys", position: new Vector3(6000, 800, -2500), radius: 160,
   color: new Color3(0.55, 0.55, 0.58), atmosphereHeight: 4,
   atmosphereColor: new Color3(0.4, 0.4, 0.45), skyColor: new Color3(0, 0, 0), mu: 8000,
-  seed: 777, atmosphere: false, relief: 0.03,
+  seed: 777, atmosphere: false, relief: 0.05,
+  terrain: {
+    baseColor: "/textures/terrain/dust_color.jpg",
+    baseNormal: "/textures/terrain/dust_normal.jpg",
+    baseTint: new Color3(0.5, 0.47, 0.42),
+    snowStart: null,
+  },
 });
 const bodies: Body[] = [vael, tethys];
 
@@ -260,6 +271,18 @@ function updateControls(dt: number): void {
   steer.roll = clamp1(keyRoll);                  // E = roll right, Q = roll left
 }
 
+const describeTerrain = (t: TerrainHandle | null): object | null => {
+  if (!t) return null;
+  const tex = t.textures;
+  return {
+    tilesU: t.look.tilesU, tilesV: t.look.tilesV,
+    slopeLo: t.look.slopeLo, slopeHi: t.look.slopeHi,
+    snowStart: t.look.snowStart,
+    fallbacks: [...tex.fallbacks],
+    ready: [tex.baseColor, tex.baseNormal, tex.rockColor, tex.rockNormal].every((x) => x.isReady()),
+  };
+};
+
 // Expose live state for automated playtests (see repo memory: no screenshots).
 // __game.step(dt) advances simulation without rendering, so headless tests can
 // simulate minutes of flight deterministically (software GL is too slow realtime).
@@ -293,6 +316,16 @@ const game = {
       seaRadius: vael.radius * (1 + vael.waterLevel * vael.relief),
     };
   },
+  /** Ground texture debug views: 0 normal, 1 rock-blend mask, 2 slope, 3 height. */
+  terrainDebug: (mode: number) => {
+    for (const b of bodies) b.surface?.terrain?.setDebug(mode);
+    return mode;
+  },
+  /** Ground texture status (fallbacks + readiness) for the terrain tests. */
+  terrain: () => ({
+    vael: describeTerrain(vael.surface?.terrain ?? null),
+    tethys: describeTerrain(tethys.surface?.terrain ?? null),
+  }),
 };
 (window as unknown as { __game?: object }).__game = game;
 

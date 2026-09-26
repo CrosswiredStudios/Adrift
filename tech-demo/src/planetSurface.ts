@@ -1,13 +1,16 @@
 import {
   Scene, Mesh, VertexData, Vector3, Color3, Color4,
   PBRMaterial, ShaderMaterial, StandardMaterial, MaterialPluginBase, Material,
-  DynamicTexture, ParticleSystem, Texture, RawTexture,
+  DynamicTexture, ParticleSystem, Texture, RawTexture, UniformBuffer,
 } from "@babylonjs/core";
 import { Constants } from "@babylonjs/core/Engines/constants";
 import { fbm3 } from "./noise";
 import { createOcean, OceanResult } from "./ocean";
 import { WaveSettings, SwashParams, swashGLSL } from "./oceanWaves";
 import { SkyPalette, FAST_NOISE_GLSL, glslNum } from "./shaderChunks";
+import {
+  attachTerrain, loadTerrainTextures, TerrainHandle, TerrainLook,
+} from "./terrainMaterial";
 
 /**
  * Coastal cross-section shaping. The raw FBM terrain meets the sea at whatever
@@ -63,6 +66,8 @@ export interface SurfaceOptions {
   waves?: WaveSettings;
   /** Atmosphere palette used for water reflections. */
   sky?: SkyPalette;
+  /** Ground texture blend (undefined = plain vertex-coloured ground). */
+  terrain?: TerrainLook;
   /** World position of the planet centre (the ocean meshes stay at the origin). */
   position?: Vector3;
 }
@@ -72,6 +77,8 @@ export interface SurfaceResult {
   water: Mesh | null;
   clouds: Mesh | null;
   ocean: OceanResult | null;
+  /** Ground texture blend handle (null when no terrain look was configured). */
+  terrain: TerrainHandle | null;
   update: (dt: number, sunDir: Vector3, isHost?: boolean) => void;
 }
 
@@ -83,11 +90,21 @@ const defaultOptions: SurfaceOptions = {
   shore: defaultShores,
 };
 
+const clamp01 = (x: number): number => Math.min(1, Math.max(0, x));
+const smoothstep = (a: number, b: number, x: number): number => {
+  const t = clamp01((x - a) / (b - a));
+  return t * t * (3 - 2 * t);
+};
+
 /**
  * Normalized terrain height (same formula the ground mesh is displaced by).
  * Shared by the mesh builder, the ocean shader's baked height field and
  * CPU-side flight collision (see planets.ts `surfaceRadius`) so the visible
  * surface, the water and the flight model never disagree.
+ *
+ * Landforms are continent + detail FBM, plus a ridged term that only grows
+ * where the continents term is high, so crests cluster into mountain ranges
+ * with craggy flanks instead of speckling every landmass uniformly.
  */
 export function terrainHeightNormalized(
   nx: number, ny: number, nz: number, seed: number, waterLevel: number,
@@ -95,8 +112,20 @@ export function terrainHeightNormalized(
 ): number {
   const continents = fbm3(nx * 2.2 + 7, ny * 2.2, nz * 2.2, 5, seed);
   const detail = fbm3(nx * 9, ny * 9 + 3, nz * 9, 4, seed + 500);
+  const rangeMask = smoothstep(0.05, 0.45, continents);
   const ridged = 1 - Math.abs(fbm3(nx * 5 + 11, ny * 5, nz * 5, 4, seed + 900));
-  const h = continents * 0.85 + detail * 0.16 + (ridged - 0.5) * 0.42;
+  // Coarse crags on the range flanks (~145 world units wavelength on Vael at
+  // 26 cycles per unit sphere — still resolvable by the 192-segment grid).
+  const crag = fbm3(nx * 26 + 31, ny * 26, nz * 26, 3, seed + 1200);
+  // Fine roughness everywhere (unmasked): keeps coastal plains from sitting
+  // flat to within wave height of the waterline, where the sea would sheet
+  // foam over ground that reads as land. ~94 world units wavelength on Vael,
+  // roughly half a unit of relief — enough to ragged the waterline into a
+  // land/water mosaic.
+  const roughness = fbm3(nx * 40 + 53, ny * 40, nz * 40, 3, seed + 2300);
+  const h = continents * 0.85 + detail * 0.16
+    + ((ridged - 0.45) * 1.1 + crag * 0.12) * rangeMask
+    + roughness * 0.02;
 
   // Coastal shaping (C1-continuous through the waterline so normals stay smooth).
   const over = h - waterLevel;
@@ -171,7 +200,10 @@ class WetSandPlugin extends MaterialPluginBase {
   public uWetTime = 0;
 
   constructor(material: Material) {
-    super(material, "WetSand", 210, { WET_SAND: true });
+    // The 6th argument ACTIVATES the plugin: custom shader code is only
+    // injected for active plugins, and without it the wet-sand band never
+    // renders (the albedo edits simply never appear in the shader).
+    super(material, "WetSand", 210, { WET_SAND: true }, true, true);
   }
 
   public getClassName(): string {
@@ -189,9 +221,15 @@ class WetSandPlugin extends MaterialPluginBase {
     };
   }
 
-  public bindForSubMesh(_uniformBuffer: unknown, _scene: unknown, _engine: unknown, _subMesh: unknown): void {
+  public bindForSubMesh(
+    uniformBuffer: UniformBuffer, _scene: unknown, _engine: unknown, _subMesh: unknown
+  ): void {
     const cfg = WET_SAND.get(this._material);
-    if (cfg) this._material.getEffect()?.setTexture("uWetHeightMap", cfg.heightMap);
+    if (!cfg) return;
+    this._material.getEffect()?.setTexture("uWetHeightMap", cfg.heightMap);
+    // The swash clock lives in the plugin UBO; it must be pushed explicitly or
+    // the run-up would sit at a frozen phase.
+    uniformBuffer.updateFloat("uWetTime", this.uWetTime);
   }
 
   public setTime(t: number): void {
@@ -203,12 +241,17 @@ class WetSandPlugin extends MaterialPluginBase {
     if (!cfg) return null;
     if (shaderType === "vertex") {
       return {
-        CUSTOM_VERTEX_DEFINITIONS: `varying vec2 vWetUv;\nvarying vec3 vWetWorld;`,
+        CUSTOM_VERTEX_DEFINITIONS: `varying vec2 vWetUv;\nvarying vec3 vWetWorld;\nvarying float vWetGrade;`,
         CUSTOM_VERTEX_MAIN_END: `
           vWetWorld = (world * vec4(position, 1.0)).xyz;
           vec3 wetDir = normalize(position);
           vWetUv = vec2(atan(wetDir.z, wetDir.x) * 0.15915494 + 0.5,
-                        acos(clamp(wetDir.y, -1.0, 1.0)) * 0.31830989);`,
+                        acos(clamp(wetDir.y, -1.0, 1.0)) * 0.31830989);
+          // tan of the ground angle: bounds every shore band to a few world
+          // units instead of a height window that smears on flat coasts.
+          vec3 wetNormal = normalize(normal);
+          float wetNr = max(dot(wetNormal, wetDir), 1e-3);
+          vWetGrade = sqrt(max(1.0 - wetNr * wetNr, 0.0)) / wetNr;`,
       };
     }
     if (shaderType === "fragment") {
@@ -216,8 +259,10 @@ class WetSandPlugin extends MaterialPluginBase {
       const scale = glslNum(cfg.relief * cfg.radius);
       return {
         CUSTOM_FRAGMENT_DEFINITIONS: `
+          uniform sampler2D uWetHeightMap;
           varying vec2 vWetUv;
           varying vec3 vWetWorld;
+          varying float vWetGrade;
           ${FAST_NOISE_GLSL}
           ${swashGLSL(cfg.swash)}`,
         CUSTOM_FRAGMENT_BEFORE_LIGHTS: `
@@ -227,15 +272,23 @@ class WetSandPlugin extends MaterialPluginBase {
           float wetDepth = max((${wl} - wetH) * ${scale}, 0.0);
           float wetShallow = clamp(1.0 - wetDepth / 3.0, 0.0, 1.0);
           float wetEdge = ${wl} + swashRise(vWetWorld, uWetTime, wetShallow) / ${scale};
-          float wet = smoothstep(wetEdge + 0.0025, wetEdge - 0.006, wetH);
-          float damp = smoothstep(wetEdge + 0.026, wetEdge, wetH) * 0.55;
+          // Bound every shore band by the local grade (h units per world unit)
+          // so the wet/damp/lace windows stay a few units wide even where the
+          // coast is nearly flat (height-only windows would smear for hundreds
+          // of units, painting foam across dry ground).
+          float wetHPerWorld = max(vWetGrade, 1e-4) / ${scale};
+          float wetWin = min(0.0085, 3.0 * wetHPerWorld);
+          float dampWin = min(0.026, 8.0 * wetHPerWorld);
+          float laceWin = min(0.02, 6.0 * wetHPerWorld);
+          float wet = smoothstep(wetEdge + 0.3 * wetWin, wetEdge - 0.7 * wetWin, wetH);
+          float damp = smoothstep(wetEdge + dampWin, wetEdge - 0.3 * wetWin, wetH) * 0.55;
           float moisture = clamp(max(wet, damp), 0.0, 1.0);
           surfaceAlbedo *= mix(1.0, 0.58, moisture);
           // Foam lace left behind by the receding swash.
           float wetPhase = swashPhaseA(vWetWorld, uWetTime, wetShallow);
           float backwash = smoothstep(0.2, -0.6, cos(wetPhase));
           float laceNoise = waterNoise(vWetWorld * 6.0 + vec3(0.0, uWetTime * 0.08, 0.0));
-          float lace = backwash * (1.0 - smoothstep(0.0, 0.02, max(wetH - wetEdge, 0.0)))
+          float lace = backwash * (1.0 - smoothstep(0.0, laceWin, max(wetH - wetEdge, 0.0)))
                      * smoothstep(0.45, 0.75, laceNoise);
           surfaceAlbedo = mix(surfaceAlbedo, vec3(0.96, 0.97, 0.98), clamp(lace, 0.0, 0.85));`,
       };
@@ -250,13 +303,21 @@ function attachWetSand(material: Material, cfg: WetSandConfig): WetSandPlugin {
   return new WetSandPlugin(material);
 }
 
-function buildGroundGeometry(opts: SurfaceOptions): { positions: number[]; normals: number[]; colors: number[]; indices: number[]; uvs: number[] } {
+function buildGroundGeometry(opts: SurfaceOptions): {
+  positions: number[]; normals: number[]; colors: number[]; indices: number[]; uvs: number[];
+  terrainUvs: number[] | null;
+} {
   const seg = opts.segments;
   const positions: number[] = [];
   const colors: number[] = [];
   const uvs: number[] = [];
   const indices: number[] = [];
   const heights: number[] = [];
+  // Tiled texture UVs for the terrain shader (independent of the mesh `uv`
+  // pair, which stays reserved for other effects).
+  const terrainUvs: number[] | null = opts.terrain ? [] : null;
+  const tilesU = opts.terrain?.tilesU ?? 0;
+  const tilesV = opts.terrain?.tilesV ?? 0;
 
   // Latitude-longitude grid sphere with FBM displacement.
   for (let iy = 0; iy <= seg; iy++) {
@@ -272,6 +333,7 @@ function buildGroundGeometry(opts: SurfaceOptions): { positions: number[]; norma
       const r = opts.radius * (1 + h * opts.relief);
       positions.push(nx * r, ny * r, nz * r);
       uvs.push(u, 1 - v);
+      if (terrainUvs) terrainUvs.push(u * tilesU, (1 - v) * tilesV);
     }
   }
   const row = seg + 1;
@@ -306,14 +368,18 @@ function buildGroundGeometry(opts: SurfaceOptions): { positions: number[]; norma
     }
   }
 
-  // Biome vertex colors by height / latitude.
-  const sand = new Color3(0.76, 0.66, 0.45);
+  // Biome vertex colors. With a terrain look attached the ground textures
+  // carry the base colour, so these become a multiplicative tint: a warm band
+  // along the shore, mild moisture variation inland and the strong depth
+  // colours under water. Rock shading and snow caps move to the terrain shader.
+  const textured = !!opts.terrain;
+  const sand = textured ? new Color3(1.04, 0.98, 0.86) : new Color3(0.76, 0.66, 0.45);
   const rock = new Color3(0.42, 0.36, 0.3);
-  const grass = opts.groundAlbedo.clone();
-  const forest = grass.scale(0.55);
+  const grass = textured ? new Color3(1, 1, 1) : opts.groundAlbedo.clone();
+  const forest = textured ? new Color3(0.78, 0.9, 0.72) : grass.scale(0.55);
   const snow = new Color3(0.9, 0.92, 0.95);
-  const deep = new Color3(0.06, 0.14, 0.2);
-  const shallow = new Color3(0.16, 0.46, 0.47);
+  const deep = new Color3(0.1, 0.22, 0.32);
+  const shallow = new Color3(0.28, 0.72, 0.74);
   for (let iy = 0; iy <= seg; iy++) {
     const v = iy / seg;
     const lat = Math.abs(v - 0.5) * 2; // 0 equator, 1 poles
@@ -328,8 +394,8 @@ function buildGroundGeometry(opts: SurfaceOptions): { positions: number[]; norma
         const moist = fbm3(ix * 0.05, iy * 0.05, 3.7, 2, opts.seed + 77) * 0.5 + 0.5;
         const veg = Color3.Lerp(grass, forest, moist);
         c.copyFrom(Color3.Lerp(sand, veg, Math.min(1, t * 2.2)));
-        if (t > 0.45) c.copyFrom(Color3.Lerp(c, rock, (t - 0.45) / 0.55));
-        if (opts.iceCaps && (lat > 0.82 || t > 0.85)) {
+        if (!textured && t > 0.45) c.copyFrom(Color3.Lerp(c, rock, (t - 0.45) / 0.55));
+        if (!textured && opts.iceCaps && (lat > 0.82 || t > 0.85)) {
           const ice = Math.min(1, Math.max((lat - 0.82) / 0.1, (t - 0.85) / 0.1));
           c.copyFrom(Color3.Lerp(c, snow, Math.min(1, ice)));
         }
@@ -337,7 +403,7 @@ function buildGroundGeometry(opts: SurfaceOptions): { positions: number[]; norma
       colors.push(c.r, c.g, c.b, 1);
     }
   }
-  return { positions, normals, colors, indices, uvs };
+  return { positions, normals, colors, indices, uvs, terrainUvs };
 }
 
 /** Procedural ground + ocean + clouds + night lights for one planet. */
@@ -365,6 +431,21 @@ export function buildPlanetSurface(scene: Scene, name: string, partial: Partial<
   groundMat.environmentIntensity = 0.35;
   groundMat.directIntensity = 1.0;
   ground.material = groundMat;
+
+  // Ground texture blend (base pair vs rock by slope + altitude + noise), with
+  // the snow line gated by `iceCaps` so airless bodies stay bare.
+  let terrain: TerrainHandle | null = null;
+  if (opts.terrain) {
+    const look: TerrainLook = {
+      ...opts.terrain,
+      snowStart: opts.iceCaps ? opts.terrain.snowStart : null,
+    };
+    const textures = loadTerrainTextures(scene, name, look);
+    terrain = attachTerrain(groundMat, {
+      look, textures, radius: opts.radius, relief: opts.relief, waterLevel: opts.waterLevel,
+    });
+    if (geo.terrainUvs) ground.setVerticesData("terrainUv", geo.terrainUvs, false, 2);
+  }
 
   // Night-side city lights: emissive speckle texture masked to land, shown on dark side.
   // ShaderMaterial (not StandardMaterial): the emissive-texture define silently stayed
@@ -604,5 +685,5 @@ export function buildPlanetSurface(scene: Scene, name: string, partial: Partial<
   void Color4;
   void ParticleSystem;
   void Texture;
-  return { ground, water, clouds, ocean, update };
+  return { ground, water, clouds, ocean, terrain, update };
 }

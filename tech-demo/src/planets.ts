@@ -5,6 +5,7 @@ import {
 import { WaveSettings } from "./oceanWaves";
 import { SkyPalette } from "./shaderChunks";
 import { createAtmosphere, AtmosphereResult } from "./atmosphere";
+import { TerrainLook, defaultTerrainLook } from "./terrainMaterial";
 
 export interface Body {
   name: string;
@@ -114,6 +115,8 @@ export interface PlanetOptions {
   ocean?: Partial<OceanLook>;
   /** Wave settings (sea state / wind axis / height scale). */
   waves?: WaveSettings;
+  /** Ground texture blend overrides (see TerrainLook in terrainMaterial.ts). */
+  terrain?: Partial<TerrainLook>;
 }
 
 export function makePlanet(scene: Scene, opts: PlanetOptions): Body {
@@ -122,6 +125,7 @@ export function makePlanet(scene: Scene, opts: PlanetOptions): Body {
   const waterLevel = opts.waterLevel ?? -0.05;
   const hasAtmo = opts.atmosphere ?? opts.atmosphereHeight > 1;
   const shore: ShoresOptions = { ...defaultShores, ...(opts.shore ?? {}) };
+  const terrain: TerrainLook = { ...defaultTerrainLook, ...(opts.terrain ?? {}) };
 
   // Sky palette for water reflections, mirroring the atmosphere below.
   const warmHaze = opts.atmosphereColor.r > 0.5 && opts.atmosphereColor.g < 0.6;
@@ -145,7 +149,7 @@ export function makePlanet(scene: Scene, opts: PlanetOptions): Body {
     seed,
     relief,
     position: opts.position,
-    segments: opts.radius > 300 ? 160 : 96,
+    segments: opts.radius > 300 ? 192 : 128,
     groundAlbedo: opts.color,
     waterLevel,
     waterColor: opts.waterColor ?? new Color3(0.05, 0.2, 0.35),
@@ -157,6 +161,7 @@ export function makePlanet(scene: Scene, opts: PlanetOptions): Body {
     ocean: opts.ocean,
     waves: opts.waves,
     sky: skyPalette,
+    terrain,
   });
   // The ocean meshes stay at the origin (the shader places them with
   // uPlanetCenter), so only the clouds / night shell are moved here.

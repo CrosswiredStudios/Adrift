@@ -249,6 +249,15 @@ void main() {
     radial = dispRad + rise * 0.5;
     radial += ${glslNum(PATCH_BIAS)}; // bias over the shell: no z-fighting at the rim
   }
+  // Never let the water surface ride above the land. Where the baked terrain
+  // stands above the still waterline, the run-up (and the patch's z-fighting
+  // bias) are capped just under the ground, so neither can sheet foam across
+  // flat coastal ground. The cap uses the same height field as the ground mesh,
+  // so it only bites where the terrain is genuinely above the water.
+  float landAbove = max((h0 - uWaterLevel) * uRelief * uRadius, 0.0);
+  if (landAbove > 0.0) {
+    radial = min(radial, max(landAbove - 0.5, 0.0));
+  }
   vec3 nrm = normalize(waveNrm - tA * slopeT - tB * slopeB);
 
   vec3 wp = uPlanetCenter + n * (uSeaRadius + radial) + tangent;
@@ -319,6 +328,14 @@ float foamPattern(vec3 p, float t) {
 }
 
 void main() {
+  // Never draw the sheet over land. The baked height field (the same field the
+  // ground mesh is displaced by) says how far the terrain stands above the
+  // still water; near the surface the depth buffer cannot resolve a sub-metre
+  // gap, so without this the translucent water leaks through low coastal ground
+  // and drags its foam with it. A small tolerance leaves the true waterline to
+  // the depth test.
+  if (vDepth < -0.05) discard;
+
   vec3 up = normalize(vWorldPos - uPlanetCenter);
   vec3 V = normalize(cameraPosition - vWorldPos);
   vec3 sunToward = -uSunDir;
