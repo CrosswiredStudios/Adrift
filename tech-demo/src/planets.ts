@@ -6,6 +6,7 @@ import { WaveSettings } from "./oceanWaves";
 import { SkyPalette } from "./shaderChunks";
 import { createAtmosphere, AtmosphereResult } from "./atmosphere";
 import { TerrainLook, defaultTerrainLook } from "./terrainMaterial";
+import { buildVegetation, defaultVegetationLook, VegetationHandle, VegetationLook } from "./vegetation";
 
 export interface Body {
   name: string;
@@ -22,6 +23,8 @@ export interface Body {
   /** Coastal shaping (beaches/shelves/basins) shared by the mesh, ocean and collision. */
   shore: ShoresOptions;
   surface?: SurfaceResult;
+  /** Instanced trees/shrubs/grass (undefined on bare bodies like Tethys). */
+  vegetation?: VegetationHandle | null;
   atmosphere?: AtmosphereResult;
   /** World position of the body center (mesh may be offset for terrain). */
   center: Vector3;
@@ -117,6 +120,8 @@ export interface PlanetOptions {
   waves?: WaveSettings;
   /** Ground texture blend overrides (see TerrainLook in terrainMaterial.ts). */
   terrain?: Partial<TerrainLook>;
+  /** Instanced vegetation (trees/shrubs/grass). Omit to leave the body bare. */
+  vegetation?: Partial<VegetationLook> | null;
 }
 
 export function makePlanet(scene: Scene, opts: PlanetOptions): Body {
@@ -188,6 +193,23 @@ export function makePlanet(scene: Scene, opts: PlanetOptions): Body {
     cloudMat?.setVector3?.("planetCenter", opts.position);
   }
 
+  // Vegetation is built last: it parents to the ground mesh and samples the
+  // same height field, so it lands exactly on the visible surface.
+  let vegetation: VegetationHandle | null = null;
+  if (opts.vegetation) {
+    vegetation = buildVegetation(scene, {
+      name: opts.name,
+      seed,
+      radius: opts.radius,
+      relief,
+      waterLevel,
+      shore,
+      ground: surface.ground,
+      center: opts.position,
+      look: { ...defaultVegetationLook, ...opts.vegetation },
+    });
+  }
+
   return {
     name: opts.name,
     mesh: surface.ground,
@@ -201,6 +223,7 @@ export function makePlanet(scene: Scene, opts: PlanetOptions): Body {
     waterLevel,
     shore,
     surface,
+    vegetation,
     atmosphere,
     center: opts.position.clone(),
   };

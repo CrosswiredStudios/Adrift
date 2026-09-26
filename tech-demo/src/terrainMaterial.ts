@@ -100,7 +100,7 @@ function configureGroundTexture(tex: Texture): void {
 }
 
 /** Flat tangent-space normal (no perturbation) used when a normal map is missing. */
-function makeFlatNormal(scene: Scene, name: string): Texture {
+export function makeFlatNormal(scene: Scene, name: string): Texture {
   const tex = new DynamicTexture(name, { width: 4, height: 4 }, scene, true);
   const ctx = tex.getContext();
   ctx.fillStyle = "rgb(128,128,255)";
@@ -111,7 +111,7 @@ function makeFlatNormal(scene: Scene, name: string): Texture {
 }
 
 /** Procedural stand-in (seeded FBM mottle) shown when a texture file is missing. */
-function makeFallbackTexture(scene: Scene, name: string, tint: Color3, seed: number): Texture {
+export function makeFallbackTexture(scene: Scene, name: string, tint: Color3, seed: number): Texture {
   const size = 256;
   const tex = new DynamicTexture(name, { width: size, height: size }, scene, true);
   const ctx = tex.getContext();

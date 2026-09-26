@@ -146,6 +146,7 @@ const vael = makePlanet(scene, {
     baseColor: "/textures/terrain/grass_color.jpg",
     baseNormal: "/textures/terrain/grass_normal.jpg",
   },
+  vegetation: {},
 });
 const tethys = makePlanet(scene, {
   name: "Tethys", position: new Vector3(6000, 800, -2500), radius: 160,
@@ -326,6 +327,18 @@ const game = {
     vael: describeTerrain(vael.surface?.terrain ?? null),
     tethys: describeTerrain(tethys.surface?.terrain ?? null),
   }),
+  /** Vegetation status (instances, texture readiness, placement limits). */
+  vegetation: () => ({
+    vael: vael.vegetation?.status() ?? null,
+    tethys: tethys.vegetation?.status() ?? null,
+  }),
+  /** Up to n body-frame directions sampled from a vegetation layer's instances. */
+  vegetationSample: (bodyIndex: number, layer: "trees" | "shrubs" | "grass", n: number) =>
+    bodies[bodyIndex]?.vegetation?.sampleDirs(layer, n) ?? [],
+  vegetationShow: (on: boolean) => {
+    for (const b of bodies) b.vegetation?.setVisible(on);
+    return on;
+  },
 };
 (window as unknown as { __game?: object }).__game = game;
 
@@ -384,6 +397,7 @@ function tick(dt: number): void {
     const sunAbove = toShip.lengthSquared() > 1e-6 ? toShip.normalize().dot(sunToward) : 1;
     b.atmosphere?.update(alt, sun.direction, smoothstep01(-0.06, 0.3, sunAbove));
     b.surface?.update(dt, sun.direction, b === host);
+    b.vegetation?.update(dt);
   }
 
   // Stars show where the sky layers have cleared (brightness 1 in clear space, ~0

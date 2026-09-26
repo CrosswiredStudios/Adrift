@@ -43,6 +43,17 @@ with a realistic atmosphere transition (blue sky → thin limb → black space a
   `TerrainTextures` material plugin on the ground PBR material (also in low quality).
   Vael blends grass+rock; airless Tethys blends rock+dust. Debug views via
   `__game.terrainDebug(1 = rock blend, 2 = slope, 3 = normalized height)`.
+- Vegetation biome: deterministic thin-instanced trees (broadleaf + conifer), shrubs and
+  grass tufts scattered over Vael's land on the same terrain height field the ground,
+  ocean and flight model use (above the shore margin, below the tree/shrub/grass lines,
+  off polar caps and steep slopes, clumped into woods by a low-frequency "forest"
+  noise). CC0 bark / beech-leaf canopy / fir-branch canopy / weed / grass cutouts in
+  `tech-demo/public/textures/vegetation/` (CREDITS there), alpha-tested PBR materials
+  with per-instance tint + scale via thin-instance buffers and a subtle wind-sway
+  vertex plugin. Layers: Vael only (Tethys is airless). Debug/status via
+  `__game.vegetation()`, `__game.vegetationSample(body, layer, n)`,
+  `__game.vegetationShow(on)`; the whole set is triangle-budgeted (~130k) and auto-
+  hidden when the camera is far from the body.
 - Coastal ocean: analytic Gerstner cascades (swell / wind / chop, sea states
   calm/mild/rough) with distance LOD fade on a camera-following patch over a global sea
   shell; depth-based colour + transparency, surf-zone shoaling/refraction, breaking
@@ -65,6 +76,7 @@ with a realistic atmosphere transition (blue sky → thin limb → black space a
 - `tech-demo/src/planets.ts`: bodies registry (`makePlanet`, `bodyAltitude`, `atmosphereFactor`).
 - `tech-demo/src/planetSurface.ts`: procedural terrain (mountain ranges + coastal shaping), seabed, clouds, night lights, baked ocean height field, wet-sand plugin.
 - `tech-demo/src/terrainMaterial.ts`: ground texture sets (+ procedural fallbacks) and the slope/altitude/noise blend plugin (`TerrainTextures`).
+- `tech-demo/src/vegetation.ts`: instanced tree/shrub/grass biome (placement, cutout card geometry, alpha-test materials, wind-sway plugin, per-body instance registry).
 - `tech-demo/src/ocean.ts`: two-layer ocean (global shell + camera patch), surf shading, refraction/depth targets, debug views.
 - `tech-demo/src/oceanWaves.ts`: wave source (sea states, Gerstner set, GLSL chunks, CPU wave samplers for buoyancy).
 - `tech-demo/src/shaderChunks.ts`: shared GLSL helpers (sky palette, water noise).
@@ -75,6 +87,7 @@ with a realistic atmosphere transition (blue sky → thin limb → black space a
 - `tech-demo/tests/smoke.spec.ts`: Playwright tests (load, climb to space, reentry, atmosphere hand-off).
 - `tech-demo/tests/ocean.spec.ts`: ocean tests (patch gating, float/buoyancy determinism, coastal + orbit screenshots).
 - `tech-demo/tests/terrain.spec.ts`: terrain tests (plugin wiring, texture loading, relief statistics, orbit/range/cliff/blend-mask screenshots).
+- `tech-demo/tests/vegetation.spec.ts`: vegetation tests (instance counts/budget, texture loading, placement constraints vs the terrain field, forest/coast/orbit screenshots).
 
 ## Run
 
