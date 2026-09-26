@@ -1,9 +1,9 @@
-import { Engine, Scene, Vector3, Color3, Color4, HemisphericLight, DirectionalLight, Mesh, Quaternion, StandardMaterial, ShaderMaterial, FreeCamera, DefaultRenderingPipeline, ImageProcessingConfiguration, SpriteManager, Sprite } from "@babylonjs/core";
-import { Constants } from "@babylonjs/core/Engines/constants";
+import { Engine, Scene, Vector3, Color3, Color4, HemisphericLight, DirectionalLight, Mesh, Quaternion, StandardMaterial, ShaderMaterial, FreeCamera, DefaultRenderingPipeline, ImageProcessingConfiguration } from "@babylonjs/core";
 import { makePlanet, atmosphereFactor, bodyAltitude, surfaceRadius, terrainHeightAt, isOverWater, Body } from "./planets";
 import { createShip, updateShip, FlightState, SteerState, bankAngle } from "./flight";
 import { updateHud } from "./hud";
 import { TerrainHandle } from "./terrainMaterial";
+import { createSun } from "./sun";
 
 const canvas = document.getElementById("scene") as HTMLCanvasElement;
 const hud = document.getElementById("hud") as HTMLElement;
@@ -99,7 +99,12 @@ void main() {
 }`;
 
 function makeStars(): Mesh {
-  const stars = Mesh.CreateSphere("stars", 16, 40000, scene);
+  // NB: the third argument is a DIAMETER (legacy signature): 110000 = 55k radius.
+  // The dome is opaque and depth-writing, so anything farther than it from the
+  // camera is culled. The star body sits at 36k (2.4k radius) and the ship can be
+  // thousands of units off the origin, so the old 40k (20k radius) dome cut the
+  // sun out of the sky entirely - hence the extra room (far plane is 60k).
+  const stars = Mesh.CreateSphere("stars", 16, 110000, scene);
   const mat = new ShaderMaterial(
     "stars-mat",
     scene,
@@ -114,28 +119,6 @@ function makeStars(): Mesh {
   return stars;
 }
 const starfield = makeStars();
-
-// Sun glow sprite so the star stays visible from deep space.
-function makeSunSprite(): Sprite {
-  const c = document.createElement("canvas");
-  c.width = 128; c.height = 128;
-  const ctx = c.getContext("2d")!;
-  const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
-  g.addColorStop(0, "rgba(255,250,235,1)");
-  g.addColorStop(0.2, "rgba(255,240,210,0.9)");
-  g.addColorStop(0.5, "rgba(255,220,170,0.25)");
-  g.addColorStop(1, "rgba(255,210,150,0)");
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, 128, 128);
-  const url = c.toDataURL("image/png");
-  const mgr = new SpriteManager("sun-mgr", url, 1, { width: 128, height: 128 }, scene);
-  mgr.blendMode = Constants.ALPHA_ADD;
-  const sprite = new Sprite("sun-sprite", mgr);
-  sprite.size = 2500;
-  sprite.isPickable = false;
-  return sprite;
-}
-const sunSprite = makeSunSprite();
 
 const vael = makePlanet(scene, {
   name: "Vael Prime", position: new Vector3(0, 0, 0), radius: 600,
@@ -160,7 +143,15 @@ const tethys = makePlanet(scene, {
     snowStart: null,
   },
 });
-const bodies: Body[] = [vael, tethys];
+// The star itself: a real body sitting exactly on the light axis (-sunDir from the
+// origin), so the terminator phase, the on-planet glare and the visible disc all
+// agree. Radius 2,400 at 36,000 u reads ~7.6 degrees wide - a giant sun from the
+// ground and from deep space alike. Weak gravity well (mu 120k ~ 0.7 u/s^2 at the
+// surface); no heat or damage gameplay yet.
+const sol = createSun(scene, {
+  name: "Sol", position: sunDir.scale(-36000), radius: 2400, mu: 120000,
+});
+const bodies: Body[] = [vael, tethys, sol.body];
 
 // Launch pad sits on the visible terrain: sample the same height function the
 // ground mesh uses, then rest the ship at flight-model contact height with
@@ -174,9 +165,12 @@ padMat.emissiveColor = new Color3(0.2, 0.8, 1);
 pad.material = padMat;
 
 const ship = createShip(scene);
-// Keep the star dome out of the GlowLayer: its blur spreads the whole 20k-radius
-// sphere across the screen and washes the stars out into a milky sky.
-scene.getGlowLayerByName("main-glow")?.addExcludedMesh(starfield);
+// Keep the star dome and the sun out of the GlowLayer: its blur spreads the huge
+// meshes across the screen (milky sky, smeared sun). HDR bloom lights both instead.
+const glowLayer = scene.getGlowLayerByName("main-glow");
+glowLayer?.addExcludedMesh(starfield);
+glowLayer?.addExcludedMesh(sol.core);
+glowLayer?.addExcludedMesh(sol.corona);
 ship.position.copyFrom(vael.center).addInPlace(padDir.scale(padR + 1.2));
 // Start upright relative to the surface, nose pointing at the horizon. Note:
 // FromLookDirectionLH aims the local -Z at the given vector, so pass the
@@ -193,7 +187,7 @@ const state: FlightState = {
 const KEY_TOKENS: Record<string, string> = {
   KeyW: "w", KeyA: "a", KeyS: "s", KeyD: "d", KeyQ: "q", KeyE: "e",
   KeyC: "c", KeyH: "h", ArrowUp: "arrowup", ArrowDown: "arrowdown",
-  Space: "space", ShiftLeft: "shift", ShiftRight: "shift", Digit1: "1", Digit2: "2",
+  Space: "space", ShiftLeft: "shift", ShiftRight: "shift", Digit1: "1", Digit2: "2", Digit3: "3",
 };
 const HANDLED = new Set(Object.values(KEY_TOKENS));
 function keyToken(e: KeyboardEvent): string {
@@ -208,6 +202,7 @@ addEventListener("keydown", (e) => {
   if (e.repeat) return; // one-shot toggles must not strobe on key repeat
   if (token === "1") state.target = vael;
   if (token === "2") state.target = tethys;
+  if (token === "3") state.target = sol.body;
   if (token === "h") toggleQuality();
 });
 addEventListener("keyup", (e) => {
@@ -288,7 +283,7 @@ const describeTerrain = (t: TerrainHandle | null): object | null => {
 // __game.step(dt) advances simulation without rendering, so headless tests can
 // simulate minutes of flight deterministically (software GL is too slow realtime).
 const game = {
-  ship, state, bodies, camera, scene, input, pointer, controls: steer,
+  ship, state, bodies, camera, scene, input, pointer, controls: steer, sun: sol,
   bankDeg: () => (bankAngle(ship, bodies) * 180) / Math.PI,
   step: (dt: number) => tick(dt),
   ocean: () => ({
@@ -391,14 +386,18 @@ function tick(dt: number): void {
   // Drive atmosphere + surface shaders. Each body gets the local sunlight factor so
   // its sky only lights up where the star reaches it.
   const sunToward = sun.direction.scale(-1);
+  // Unit vector from the camera to the real star body: the sky dome draws its sun
+  // disc/halo about this direction so the glare sits exactly on the visible sun.
+  const solTowardView = sol.body.center.subtract(camera.position).normalize();
   for (const b of bodies) {
     const alt = bodyAltitude(b, ship.position);
     const toShip = ship.position.subtract(b.center);
     const sunAbove = toShip.lengthSquared() > 1e-6 ? toShip.normalize().dot(sunToward) : 1;
-    b.atmosphere?.update(alt, sun.direction, smoothstep01(-0.06, 0.3, sunAbove));
+    b.atmosphere?.update(alt, sun.direction, smoothstep01(-0.06, 0.3, sunAbove), solTowardView);
     b.surface?.update(dt, sun.direction, b === host);
     b.vegetation?.update(dt);
   }
+  sol.update(dt); // advance the star's surface shader (convection scroll)
 
   // Stars show where the sky layers have cleared (brightness 1 in clear space, ~0
   // under a thick sky) and again at night, when the star's light no longer washes the
@@ -407,8 +406,6 @@ function tick(dt: number): void {
   const starBright = Math.max((1 - sky) ** 3, (1 - daylight) * 0.85, 0.02);
   (starfield.material as ShaderMaterial).setFloat("brightness", starBright);
 
-  // Sun sprite parked far along the sun direction from the camera.
-  sunSprite.position.copyFrom(camera.position).addInPlace(sun.direction.scale(-30000));
   updateHud(hud, ship, state, bodies);
 }
 

@@ -40,8 +40,11 @@ export interface AtmosphereResult {
    * @param cameraAltitude altitude above the mean radius
    * @param sunDir direction the star light travels
    * @param daylight 0..1 sunlight at the camera's spot on the planet (0 = night side)
+   * @param sunViewToward unit vector from the camera toward the star body: draws the
+   *   disc/halo on the visible sun so the glare hands off to the real body cleanly
+   *   (defaults to the light axis when omitted)
    */
-  update: (cameraAltitude: number, sunDir: Vector3, daylight: number) => void;
+  update: (cameraAltitude: number, sunDir: Vector3, daylight: number, sunViewToward?: Vector3) => void;
 }
 
 const OUTER_VERTEX = `
@@ -134,6 +137,7 @@ varying vec3 vDirW;
 varying vec3 vPosW;
 uniform vec3 cameraPosition;
 uniform vec3 sunDirection;
+uniform vec3 sunViewToward;
 uniform vec3 skyTint;
 uniform float skyStrength;
 uniform vec3 hazeTint;
@@ -176,10 +180,13 @@ void main() {
   // ACES roll it off toward white, which is what washed the sky out before.
   vec3 col = (ray * 0.6 + mie * 0.3) * depth * sunTint;
 
-  // Sun disc + halo (glare through the air, tinted by the star's light, only where
-  // the sun is actually up).
-  float disc = smoothstep(0.9996, 0.99985, mu);
-  float halo = pow(clamp(mu, 0.0, 1.0), 26.0) * 0.4 + pow(clamp(mu, 0.0, 1.0), 350.0) * 1.1;
+  // Sun disc + halo: glare through the air, tinted by the star's light, only where
+  // the sun is actually up. Drawn about the direction to the real star body (not the
+  // scene light axis) with the same apparent width, so the disc sits exactly on the
+  // body behind the dome and cross-fades into it as the atmosphere thins out.
+  float muView = dot(N, sunViewToward);
+  float disc = smoothstep(0.9996, 0.99985, muView);
+  float halo = pow(clamp(muView, 0.0, 1.0), 26.0) * 0.4 + pow(clamp(muView, 0.0, 1.0), 350.0) * 1.1;
   col += sunTint * (disc * 4.0 + halo) * sunIntensity * day;
 
   // Sunset warming near terminator at low view angles.
@@ -228,7 +235,7 @@ export function createAtmosphere(scene: Scene, name: string, opts: AtmosphereOpt
     {
       attributes: ["position", "normal"],
       uniforms: [
-        "world", "worldViewProjection", "cameraPosition", "sunDirection",
+        "world", "worldViewProjection", "cameraPosition", "sunDirection", "sunViewToward",
         "skyTint", "skyStrength", "hazeTint", "hazeStrength", "hazeG",
         "sunTint", "sunIntensity", "density", "daylight",
       ],
@@ -251,9 +258,10 @@ export function createAtmosphere(scene: Scene, name: string, opts: AtmosphereOpt
   applyStatics(outerMat);
   applyStatics(innerMat);
   innerMat.setFloat("sunIntensity", opts.sunIntensity);
+  innerMat.setVector3("sunViewToward", new Vector3(0, 1, 0)); // overwritten every tick
 
   let skyFactor = 1;
-  const update = (cameraAltitude: number, sunDir: Vector3, daylight = 1): void => {
+  const update = (cameraAltitude: number, sunDir: Vector3, daylight = 1, sunViewToward?: Vector3): void => {
     // Unclamped altitude ratio: below 1 = inside the shell, above 1 = in space.
     const t = Math.max(0, cameraAltitude / Math.max(opts.height, 1));
     // Sky dome: full near the surface, gone just above the shell. The dome is only
@@ -271,6 +279,7 @@ export function createAtmosphere(scene: Scene, name: string, opts: AtmosphereOpt
       if (cam) mat.setVector3("cameraPosition", cam.position);
     }
     innerMat.setFloat("daylight", daylight);
+    innerMat.setVector3("sunViewToward", sunViewToward ?? sunDir.scale(-1));
     inner.setEnabled(innerDensity > 0.01);
     skyFactor = innerDensity;
   };

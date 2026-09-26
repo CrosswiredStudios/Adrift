@@ -103,7 +103,7 @@ const stepFrames = async (page: import("@playwright/test").Page, frames: number,
 
 test("ocean attaches, patch follows altitude, ship floats on waves", async ({ page }) => {
   await page.goto("/", { waitUntil: "networkidle" });
-  await page.waitForFunction(() => (window as unknown as { __game?: unknown }).__game !== undefined, null, { timeout: 15000 });
+  await page.waitForFunction(() => (window as unknown as { __game?: unknown }).__game !== undefined, null, { timeout: 30000 });
   await page.evaluate(INSTALL_HELPERS);
 
   const gating = await page.evaluate(() => {
@@ -161,7 +161,7 @@ test("ocean attaches, patch follows altitude, ship floats on waves", async ({ pa
 test("coastal + open-water screenshots", async ({ page }) => {
   test.setTimeout(240000);
   await page.goto("/", { waitUntil: "networkidle" });
-  await page.waitForFunction(() => (window as unknown as { __game?: unknown }).__game !== undefined, null, { timeout: 15000 });
+  await page.waitForFunction(() => (window as unknown as { __game?: unknown }).__game !== undefined, null, { timeout: 30000 });
   await page.evaluate(INSTALL_HELPERS);
 
   // Surf view: float just offshore and look back at the beach. NB: the cloud

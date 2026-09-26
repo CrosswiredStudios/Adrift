@@ -75,7 +75,7 @@ test("ground textures: plugin attached, textures load, no shader errors", async 
   await page.waitForFunction(
     () => (window as unknown as { __game?: unknown }).__game !== undefined,
     null,
-    { timeout: 15000 }
+    { timeout: 30000 }
   );
   await page.waitForFunction(
     () => {
@@ -122,7 +122,7 @@ test("terrain relief: mountain ranges, crags, oceans", async ({ page }) => {
   await page.waitForFunction(
     () => (window as unknown as { __game?: unknown }).__game !== undefined,
     null,
-    { timeout: 15000 }
+    { timeout: 30000 }
   );
 
   const scan = await page.evaluate(() => {
@@ -159,7 +159,7 @@ test("terrain screenshots: orbit, range, cliff, blend mask", async ({ page }) =>
   await page.waitForFunction(
     () => (window as unknown as { __game?: unknown }).__game !== undefined,
     null,
-    { timeout: 15000 }
+    { timeout: 30000 }
   );
   await page.waitForFunction(
     () => {

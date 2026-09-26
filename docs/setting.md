@@ -2,7 +2,7 @@
 
 ## System: Vesper Drift
 
-A small system with a sun, two planets, and one large moon.
+A small system with a sun (Sol), two planets, and one large moon.
 
 ### Vael (starting planet)
 

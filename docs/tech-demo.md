@@ -13,7 +13,7 @@ with a realistic atmosphere transition (blue sky → thin limb → black space a
 - `Up/Down`: throttle up/down (arcade cruise speed).
 - `Shift`: boost while thrusting.
 - `Space` or `C`: full brake (works even while thrusting).
-- `1/2`: target Vael Prime / Tethys.
+- `1/2/3`: target Vael Prime / Tethys / the star Sol.
 - `H`: toggle High/Low quality (bloom, grain, MSAA, clouds).
 
 ## What It Proves
@@ -22,7 +22,8 @@ with a realistic atmosphere transition (blue sky → thin limb → black space a
 - Scale strategy: real units with camera far plane management.
 - Realistic atmosphere: custom Rayleigh + Mie scattering shaders.
   - Outer limb shell seen from space (limb brightening, twilight band, terminator).
-  - Inner sky dome seen from the ground (sun disc + halo, horizon haze, sunset warming).
+  - Inner sky dome seen from the ground (sun disc + halo aligned to the real star
+    body, horizon haze, sunset warming).
   - Star-driven: sky, limb and glare only appear where the sun lights the air, so the
     night side is black with stars; the star is the scene's light source.
   - Per-planet scatter palette (`skyTint`/`skyStrength`, `hazeTint`/`hazeStrength`,
@@ -33,6 +34,12 @@ with a realistic atmosphere transition (blue sky → thin limb → black space a
     reads as a soft haze band instead of a hard edge, and the cloud deck thins out
     toward the night side and when seen edge-on so its shell never draws a hard line.
   - Cross-faded by camera altitude; sun color, exposure, and starfield fade with depth.
+- Real star body: the sun (Sol) is an actual limb-darkened sphere (~7.6 degrees wide at
+  36,000 u) with a soft billboard corona, appended to the bodies list (HUD distance,
+  weak gravity well, landable). It sits exactly on the scene light axis, so the terminator,
+  the sky-dome glare (now drawn about the true camera-to-star direction) and the visible
+  disc all agree at every altitude. The opaque star dome spans 55k u, so it no longer
+  depth-culls objects beyond 20k u - the bug that made the old sun sprite invisible.
 - Procedural planet: FBM terrain with raised relief and masked mountain ranges (ridged
   crests and craggy flanks clustered on high ground), beach/shelf/basin bathymetry and
   biome vertex tints, animated procedural clouds, night-side city lights, and a
@@ -74,6 +81,7 @@ with a realistic atmosphere transition (blue sky → thin limb → black space a
 - `tech-demo/src/main.ts`: scene setup, HDR pipeline, procedural starfield, chase camera, `__game` debug handle.
 - `tech-demo/src/flight.ts`: ship controller (thrust, drag, heat, landing).
 - `tech-demo/src/planets.ts`: bodies registry (`makePlanet`, `bodyAltitude`, `atmosphereFactor`).
+- `tech-demo/src/sun.ts`: the star Sol (limb-darkened core shader + billboard corona, registers as a body).
 - `tech-demo/src/planetSurface.ts`: procedural terrain (mountain ranges + coastal shaping), seabed, clouds, night lights, baked ocean height field, wet-sand plugin.
 - `tech-demo/src/terrainMaterial.ts`: ground texture sets (+ procedural fallbacks) and the slope/altitude/noise blend plugin (`TerrainTextures`).
 - `tech-demo/src/vegetation.ts`: instanced tree/shrub/grass biome (placement, cutout card geometry, alpha-test materials, wind-sway plugin, per-body instance registry).
@@ -86,6 +94,7 @@ with a realistic atmosphere transition (blue sky → thin limb → black space a
 - `tech-demo/src/hud.ts`: overlay readouts.
 - `tech-demo/tests/smoke.spec.ts`: Playwright tests (load, climb to space, reentry, atmosphere hand-off).
 - `tech-demo/tests/ocean.spec.ts`: ocean tests (patch gating, float/buoyancy determinism, coastal + orbit screenshots).
+- `tech-demo/tests/sun.spec.ts`: sun tests (body wiring/alignment, space + ground + mid-atmosphere screenshots, no-sprite regression).
 - `tech-demo/tests/terrain.spec.ts`: terrain tests (plugin wiring, texture loading, relief statistics, orbit/range/cliff/blend-mask screenshots).
 - `tech-demo/tests/vegetation.spec.ts`: vegetation tests (instance counts/budget, texture loading, placement constraints vs the terrain field, forest/coast/orbit screenshots).
 

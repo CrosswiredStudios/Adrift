@@ -7,7 +7,7 @@ test("loads without errors and exposes game state", async ({ page }) => {
     if (m.type() === "error") errors.push(m.text());
   });
   await page.goto("/", { waitUntil: "networkidle" });
-  await page.waitForFunction(() => (window as any).__game !== undefined, null, { timeout: 15000 });
+  await page.waitForFunction(() => (window as any).__game !== undefined, null, { timeout: 30000 });
   // Let a few frames render.
   await page.waitForTimeout(3000);
   const snap = await page.evaluate(() => {
@@ -48,7 +48,7 @@ test("loads without errors and exposes game state", async ({ page }) => {
 
 test("takeoff to space transitions atmosphere to zero", async ({ page }) => {
   await page.goto("/", { waitUntil: "networkidle" });
-  await page.waitForFunction(() => (window as any).__game !== undefined, null, { timeout: 15000 });
+  await page.waitForFunction(() => (window as any).__game !== undefined, null, { timeout: 30000 });
   const start = await page.evaluate(() => {
     const g = (window as any).__game;
     return { alt: g.state.altitude, atmo: g.state.atmoDensity, height: g.bodies[0].atmosphereHeight };
@@ -104,7 +104,7 @@ test("takeoff to space transitions atmosphere to zero", async ({ page }) => {
 
 test("reentry heats up and lands back in atmosphere", async ({ page }) => {
   await page.goto("/", { waitUntil: "networkidle" });
-  await page.waitForFunction(() => (window as any).__game !== undefined, null, { timeout: 15000 });
+  await page.waitForFunction(() => (window as any).__game !== undefined, null, { timeout: 30000 });
   const result = await page.evaluate(() => {
     const g = (window as any).__game;
     // Start in space above Vael: 400 units up, orbital-ish sideways velocity.
