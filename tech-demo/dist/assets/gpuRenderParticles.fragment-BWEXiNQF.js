@@ -1,4 +1,4 @@
-import{t as e}from"./shaderStore-D-XQlhUT.js";import{t}from"./objectIdFunctions-B7azwFhh.js";import{n,t as r}from"./meshBlendTagFragmentOutput-DphJWeHM.js";import{A as i,D as a,H as o,O as s,P as c,U as l,Y as u,j as d,k as f,n as p}from"./index-Dfcdkin4.js";var m=`gpuRenderParticlesPixelShader`,h=`var diffuseSamplerSampler: sampler;var diffuseSampler: texture_2d<f32>;varying vUV: vec2f;varying vColor: vec4f;
+import{t as e}from"./shaderStore-D-XQlhUT.js";import{t}from"./objectIdFunctions-B7azwFhh.js";import{n,t as r}from"./meshBlendTagFragmentOutput-DphJWeHM.js";import{A as i,D as a,H as o,O as s,P as c,U as l,Y as u,j as d,k as f,n as p}from"./index-DzF_P8NO.js";var m=`gpuRenderParticlesPixelShader`,h=`var diffuseSamplerSampler: sampler;var diffuseSampler: texture_2d<f32>;varying vUV: vec2f;varying vColor: vec4f;
 #ifdef PREPASS
 uniform geometryZeroAlphaDiscard: f32;
 #ifdef PREPASS_POSITION

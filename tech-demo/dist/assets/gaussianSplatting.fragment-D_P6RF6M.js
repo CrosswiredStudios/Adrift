@@ -1,4 +1,4 @@
-import{t as e}from"./shaderStore-D-XQlhUT.js";import{t}from"./objectIdFunctions-532nR7xV.js";import{K as n,S as r,T as i,_ as a,a as o,b as s,q as c,r as l,x as u,xt as d}from"./index-Dfcdkin4.js";var f=`gaussianSplattingPixelShader`,p=`#include<clipPlaneFragmentDeclaration>
+import{t as e}from"./shaderStore-D-XQlhUT.js";import{t}from"./objectIdFunctions-532nR7xV.js";import{K as n,S as r,T as i,_ as a,a as o,b as s,q as c,r as l,x as u,xt as d}from"./index-DzF_P8NO.js";var f=`gaussianSplattingPixelShader`,p=`#include<clipPlaneFragmentDeclaration>
 #include<logDepthDeclaration>
 #include<fogFragmentDeclaration>
 #define PREPASS_CUSTOM_VARYINGS
