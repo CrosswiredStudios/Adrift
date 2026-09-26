@@ -90,8 +90,10 @@ void main() {
   // Limb factor: grazing view angles accumulate more atmosphere. The shell sits at
   // the top of the atmosphere, so a per-fragment height falloff would be constant
   // (h == 1) and useless here - the view angle and sun term shape the glow, and the
-  // JS side cross-fades the whole shell by camera altitude.
-  float limb = pow(1.0 - abs(dot(N, V)), 2.6);
+  // JS side cross-fades the whole shell by camera altitude. The exponent is chosen
+  // so a TALL shell still reads as a thin halo around the planet instead of a
+  // translucent bubble filling the view.
+  float limb = pow(1.0 - abs(dot(N, V)), 5.0);
 
   // Sunlight gate: the shell only glows where the star is actually lighting it, so
   // the night side of the planet never shows an atmosphere.
