@@ -1,5 +1,8 @@
 import { Constants } from "@babylonjs/core/Engines/constants";
-import { DynamicTexture, Mesh, Scene, ShaderMaterial, Vector3 } from "@babylonjs/core";
+import { Camera, DynamicTexture, Mesh, Scene, ShaderMaterial, Vector3 } from "@babylonjs/core";
+import { clamp01, smoothstep } from "../common/math";
+import { fbm3 } from "../common/noise";
+import { CloudVolume, CloudVolumePartial, createCloudVolume } from "./cloudVolume";
 
 /**
  * Night-lights + cloud shells for one planet (SRP: sky extras live here,
@@ -112,122 +115,178 @@ export interface CloudsInput {
   relief: number;
   segments: number;
   coverage: number;
+  /** Seed for the density field (defaults to 1337). */
+  seed?: number;
+  /** Slab thickness in world units (defaults to ~2.3% of radius). */
+  thickness?: number;
+  /** Cloud base altitude above the mean radius (defaults to thickness * 0.9). */
+  baseHeight?: number;
+}
+
+/** Cloud quality tiers, ordered best-first. H cycles them; default is ultra. */
+export type CloudTier = "ultra" | "high" | "balanced" | "lite";
+
+export const CLOUD_TIERS: CloudTier[] = ["ultra", "high", "balanced", "lite"];
+
+/** Raymarch step counts per tier: [viewSteps, lightSteps]. */
+export const CLOUD_TIER_STEPS: Record<CloudTier, [number, number]> = {
+  ultra: [64, 10],
+  high: [48, 8],
+  balanced: [28, 6],
+  lite: [0, 0],
+};
+
+/** Post-process render scale per tier (lite disables the deck). */
+export const CLOUD_TIER_SCALE: Record<CloudTier, number> = {
+  ultra: 0.6,
+  high: 0.5,
+  balanced: 0.35,
+  lite: 0.35,
+};
+
+/** CPU mirror of the cloud density slab (also drives view obstruction). */
+export interface CloudField {
+  seed: number;
+  coverage: number;
+  innerR: number;
+  outerR: number;
 }
 
 export interface Clouds {
+  /** Legacy shell mesh (kept for the smoke test + hide-deck helpers). Hidden. */
   mesh: Mesh;
+  field: CloudField;
+  bounds: { innerR: number; outerR: number };
+  tier: CloudTier;
+  /** True while the volume pass pair is attached to the camera. */
+  readonly enabled: boolean;
+  setTier(tier: CloudTier): void;
+  /** 0..1 cloud density at a world point (0 outside the slab). */
+  sample(point: Vector3, time: number): number;
+  /** World-space center the density field is evaluated around. */
+  center(): Vector3;
+  /** Move the deck (CPU field + GPU slab) to a new planet center. */
+  setCenter(center: Vector3): void;
   update(dt: number, sunDir: Vector3): void;
 }
 
-/** Cloud deck: separate sphere with procedural FBM alpha shader, slow rotation. */
-export function buildClouds(scene: Scene, name: string, input: CloudsInput): Clouds {
-  const cloudR = input.radius * (1 + input.relief * 1.6 + 0.004);
-  const clouds = Mesh.CreateSphere(`${name}-clouds`, Math.max(48, input.segments >> 1), cloudR * 2, scene);
-  const cloudMat = new ShaderMaterial(
-    `${name}-cloud-mat`,
-    scene,
-    {
-      vertexSource: `
-          precision highp float;
-          attribute vec3 position;
-          attribute vec3 normal;
-          attribute vec2 uv;
-          uniform mat4 worldViewProjection;
-          uniform mat4 world;
-          varying vec3 vNormalW;
-          varying vec3 vPosW;
-          varying vec2 vUv;
-          void main() {
-            vec4 wp = world * vec4(position, 1.0);
-            vPosW = wp.xyz;
-            vNormalW = normalize(mat3(world) * normal);
-            vUv = uv;
-            gl_Position = worldViewProjection * vec4(position, 1.0);
-          }`,
-      fragmentSource: `
-          precision highp float;
-          varying vec3 vNormalW;
-          varying vec3 vPosW;
-          varying vec2 vUv;
-          uniform vec3 sunDirection;
-          uniform vec3 cameraPosition;
-          uniform float time;
-          uniform float coverage;
-          uniform vec3 planetCenter;
-          float hash(vec3 p) {
-            p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));
-            p *= 17.0;
-            return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
-          }
-          float vnoise(vec3 p) {
-            vec3 i = floor(p); vec3 f = fract(p);
-            f = f * f * (3.0 - 2.0 * f);
-            float n000 = hash(i); float n100 = hash(i + vec3(1,0,0));
-            float n010 = hash(i + vec3(0,1,0)); float n110 = hash(i + vec3(1,1,0));
-            float n001 = hash(i + vec3(0,0,1)); float n101 = hash(i + vec3(1,0,1));
-            float n011 = hash(i + vec3(0,1,1)); float n111 = hash(i + vec3(1,1,1));
-            return mix(mix(mix(n000,n100,f.x), mix(n010,n110,f.x), f.y),
-                       mix(mix(n001,n101,f.x), mix(n011,n111,f.x), f.y), f.z);
-          }
-          float fbm(vec3 p) {
-            float s = 0.0; float a = 0.5;
-            for (int i = 0; i < 5; i++) { s += a * vnoise(p); p *= 2.03; a *= 0.5; }
-            return s;
-          }
-          void main() {
-            vec3 dir = normalize(vPosW - planetCenter);
-            vec3 p = dir * 6.0 + vec3(time * 0.004, 0.0, time * 0.002);
-            float d = fbm(p + fbm(p * 1.7) * 0.8);
-            float alpha = smoothstep(1.0 - coverage - 0.25, 1.0 - coverage + 0.35, d);
-            vec3 N = normalize(vNormalW);
-            vec3 L = normalize(-sunDirection);
-            float ndl = clamp(dot(N, L), 0.0, 1.0);
-            float dayMix = smoothstep(-0.18, 0.3, dot(N, L));
-            vec3 V = normalize(cameraPosition - vPosW);
-            float silver = pow(clamp(dot(reflect(-L, N), V), 0.0, 1.0), 8.0);
-            vec3 col = mix(vec3(0.05,0.06,0.09), vec3(1.02,1.0,0.98) * (0.25 + 0.95 * ndl), dayMix);
-            col += vec3(1.0, 0.95, 0.9) * silver * 0.35 * dayMix;
-            // Fade clouds seen edge-on (just above the deck, or from space): the shell
-            // surface must never draw a hard line across the ground.
-            float rim = abs(dot(N, V));
-            alpha *= mix(0.06, 1.0, smoothstep(0.02, 0.62, rim));
-            // ...and thin the deck out toward the night side, where a dark veil over
-            // still-lit ground is what reads as a hard terminator edge.
-            alpha *= mix(0.2, 1.0, dayMix);
-            gl_FragColor = vec4(col, alpha * 0.92);
-          }`,
-    },
-    {
-      attributes: ["position", "normal", "uv"],
-      uniforms: [
-        "world",
-        "worldViewProjection",
-        "sunDirection",
-        "cameraPosition",
-        "time",
-        "coverage",
-        "planetCenter",
-      ],
-      needAlphaBlending: true,
-      needAlphaTesting: false,
-    },
-  );
-  cloudMat.backFaceCulling = false;
-  cloudMat.disableDepthWrite = false;
-  cloudMat.setFloat("coverage", input.coverage);
-  cloudMat.setVector3("planetCenter", new Vector3(0, 0, 0));
-  clouds.material = cloudMat;
+/**
+ * Deterministic cloud density in 0..1. Domain-warped FBM over the shell
+ * direction (matches the shader's pattern), gated by a vertical slab profile
+ * so density is zero outside [innerR, outerR]. Coverage remaps the FBM the
+ * same way the shader's smoothstep does.
+ */
+export function cloudDensityAtPoint(
+  field: CloudField,
+  center: Vector3,
+  point: Vector3,
+  time: number,
+): number {
+  const toPoint = point.subtract(center);
+  const r = toPoint.length();
+  if (r < field.innerR || r > field.outerR) return 0;
+  const dir = toPoint.scale(1 / Math.max(r, 1e-6));
+  const drift = time * 0.004;
+  // Match the shader: p = dir * 6 + drift, warped by a second FBM sample.
+  const warp = fbm3(dir.x * 6 * 1.7 + drift, dir.y * 6 * 1.7, dir.z * 6 * 1.7, 5, field.seed + 17);
+  const d =
+    fbm3(
+      dir.x * 6 + warp * 0.8 + drift,
+      dir.y * 6 + warp * 0.8,
+      dir.z * 6 + warp * 0.8 + drift * 0.5,
+      5,
+      field.seed,
+    ) *
+      0.5 +
+    0.5;
+  const lo = 1 - field.coverage - 0.25;
+  const hi = 1 - field.coverage + 0.35;
+  const cover = smoothstep(lo, hi, d);
+  // Vertical slab profile: fade at both faces so fly-through has soft edges.
+  const t = (r - field.innerR) / Math.max(field.outerR - field.innerR, 1e-6);
+  const profile = Math.sin(Math.PI * clamp01(t)) ** 0.7;
+  return clamp01(cover * profile);
+}
+
+/**
+ * Volumetric cloud deck, playground-style (#MAONNT#13): a weather-map shaped
+ * slab raymarched as a camera post-process with depth-aware compositing,
+ * Beer-law light marching, and a spatial denoise pass. The slab is
+ * planet-relative (base altitude + thickness above the mean radius), so orbit,
+ * horizon, and fly-through views all accumulate real optical depth along each
+ * view ray. A CPU density mirror drives the in-cloud view-obstruction veil.
+ *
+ * The legacy `${name}-clouds` shell mesh is kept (hidden) so existing
+ * hide-deck test helpers and the smoke test keep resolving.
+ */
+export function buildClouds(
+  scene: Scene,
+  name: string,
+  input: CloudsInput,
+  camera?: Camera,
+  volumePatch?: CloudVolumePartial,
+): Clouds {
+  const seed = input.seed ?? 1337;
+  const thickness = input.thickness ?? Math.max(14, input.radius * 0.023);
+  const baseHeight = input.baseHeight ?? thickness * 0.9;
+  const innerR = input.radius + baseHeight;
+  const outerR = innerR + thickness;
+  const field: CloudField = { seed, coverage: input.coverage, innerR, outerR };
+  // Hidden placeholder: tests hide the deck via setEnabled on this mesh.
+  const clouds = Mesh.CreateSphere(`${name}-clouds`, 8, 1, scene);
+  clouds.isVisible = false;
+  clouds.isPickable = false;
+  clouds.setEnabled(false);
+
+  const cam = camera ?? scene.activeCamera;
+  let volume: CloudVolume | null = null;
+  if (cam) {
+    volume = createCloudVolume(scene, cam, {
+      center: new Vector3(0, 0, 0),
+      radius: input.radius,
+      baseHeight,
+      thickness,
+      coverage: input.coverage,
+      seed,
+      ...volumePatch,
+    });
+  }
 
   let cloudTime = 0;
+  let tier: CloudTier = "ultra";
+  const applyTier = (next: CloudTier): void => {
+    tier = next;
+    const [view, light] = CLOUD_TIER_STEPS[next];
+    volume?.setOptions({ marchSteps: view, lightSteps: light, renderScale: CLOUD_TIER_SCALE[next] });
+    volume?.setEnabled(next !== "lite");
+  };
+  applyTier("ultra");
   return {
     mesh: clouds,
+    field,
+    bounds: { innerR, outerR },
+    get tier() {
+      return tier;
+    },
+    get enabled() {
+      return volume?.enabled ?? false;
+    },
+    setTier: (next: CloudTier) => {
+      applyTier(next);
+    },
+    sample: (point: Vector3, time: number) => {
+      return cloudDensityAtPoint(field, clouds.position.clone(), point, time);
+    },
+    /** World-space center the density field is evaluated around. */
+    center: () => clouds.position.clone(),
+    setCenter: (center: Vector3) => {
+      clouds.position.copyFrom(center);
+      volume?.setCenter(center);
+    },
     update: (dt: number, sunDir: Vector3) => {
-      clouds.rotation.y += dt * 0.004;
-      cloudMat.setVector3("sunDirection", sunDir);
-      const cam = scene.activeCamera;
-      if (cam) cloudMat.setVector3("cameraPosition", cam.position);
       cloudTime += dt;
-      cloudMat.setFloat("time", cloudTime);
+      volume?.setSunDirection(sunDir.scale(-1));
+      volume?.update(dt);
     },
   };
 }

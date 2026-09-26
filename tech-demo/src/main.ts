@@ -20,6 +20,7 @@ import { createCameraRig } from "./app/cameraRig";
 import { createInput, daylightFactor, updateControls } from "./app/input";
 import { buildWorld } from "./app/world";
 import { createQualityPolicy } from "./app/qualityPolicy";
+import { CloudTier } from "./world/skyExtras";
 
 const canvas = document.getElementById("scene") as HTMLCanvasElement;
 const hud = document.getElementById("hud") as HTMLElement;
@@ -40,9 +41,9 @@ camera.minZ = 0.1;
 const pipeline = new DefaultRenderingPipeline("hdr", true, scene, [camera]);
 pipeline.samples = 4;
 pipeline.bloomEnabled = true;
-pipeline.bloomThreshold = 0.85;
-pipeline.bloomWeight = 0.35;
-pipeline.bloomKernel = 64;
+pipeline.bloomThreshold = 1.0;
+pipeline.bloomWeight = 0.25;
+pipeline.bloomKernel = 32;
 pipeline.bloomScale = 0.5;
 pipeline.fxaaEnabled = true;
 pipeline.sharpenEnabled = true;
@@ -55,7 +56,7 @@ pipeline.imageProcessing.toneMappingEnabled = true;
 pipeline.imageProcessing.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
 pipeline.imageProcessing.contrast = 1.08;
 pipeline.imageProcessing.vignetteEnabled = true;
-pipeline.imageProcessing.vignetteWeight = 1.6;
+pipeline.imageProcessing.vignetteWeight = 0.8;
 
 // Procedural starfield dome (see starfield.ts); brightness driven by sky factor.
 const starfield = makeStars(scene);
@@ -94,10 +95,11 @@ const state: FlightState = {
   rig: null,
 };
 
-// Render quality (see qualityPolicy.ts): toggles bloom/grain/MSAA, clouds,
-// and the ocean's expensive passes.
+// Render quality (see qualityPolicy.ts): H cycles Ultra -> High -> Balanced
+// -> Lite, defaulting to Ultra (best). Tiers drive the volumetric cloud
+// deck's raymarch steps plus bloom/grain/MSAA and the ocean's passes.
 const quality = createQualityPolicy(pipeline, bodies);
-let highQuality = true;
+quality.apply();
 
 // Pause menu: Esc toggles the overlay and freezes the sim tick while the
 // scene keeps rendering behind it. __game.step stays unpaused so headless
@@ -113,7 +115,7 @@ resumeButton.addEventListener("click", () => setPaused(false));
 
 const controls = createInput(canvas, {
   onToggleQuality: () => {
-    highQuality = quality.toggle();
+    quality.toggle();
     quality.apply();
   },
   onSelectTarget: (i: number) => {
@@ -159,8 +161,23 @@ const game = {
   ocean: () => ({
     vael: vael.surface?.ocean?.stats() ?? null,
     tethys: tethys.surface?.ocean?.stats() ?? null,
-    quality: highQuality,
+    quality: quality.tier,
   }),
+  /** Cloud deck status: tier, density at camera/ship, veil strength. */
+  clouds: () => ({
+    tier: quality.tier,
+    density: cloudObstruction.density,
+    veil: cloudObstruction.veil,
+  }),
+  /** Cycle/set the cloud quality tier (H key cycles; default ultra). */
+  cloudQuality: (tier?: string) => {
+    if (tier !== undefined) quality.setTier(tier as CloudTier);
+    else {
+      quality.toggle();
+    }
+    quality.apply();
+    return quality.tier;
+  },
   /** Ocean debug views: 0 normal, 1 depth, 2 breaking, 3 slope. */
   oceanDebug: (mode: number) => {
     for (const b of bodies) {
@@ -210,6 +227,32 @@ const game = {
 // Smooth chase camera (see cameraRig.ts), initialized behind the ship.
 const cameraRig = createCameraRig(camera, ship, state, bodies, input, padDir.clone());
 
+// In-cloud obstruction: sample the volumetric deck's CPU density field at the
+// camera each tick and drive scene fog as a whiteout veil, so dense cloud
+// blocks the player's view when flying through. Eased to avoid popping.
+// Declared after `game` (the debug handle reads it) but before tick() uses it.
+scene.fogMode = Scene.FOGMODE_EXP2;
+scene.fogColor = new Color3(0.92, 0.94, 0.97);
+scene.fogDensity = 0;
+const cloudObstruction = { density: 0, veil: 0 };
+let cloudClock = 0;
+function updateCloudObstruction(dt: number): void {
+  cloudClock += dt;
+  let density = 0;
+  for (const b of bodies) {
+    const deck = b.surface?.cloudDeck;
+    // Lite disables the deck (post-process detached): no veil either.
+    if (!deck || deck.tier === "lite") continue;
+    density = Math.max(density, deck.sample(camera.position, cloudClock));
+  }
+  cloudObstruction.density = density;
+  // Veil ramps in fast once inside real cloud, eases out on exit.
+  const target = density <= 0.01 ? 0 : Math.min(1, density * 1.6);
+  const rate = target > cloudObstruction.veil ? 3.5 : 1.2;
+  cloudObstruction.veil += (target - cloudObstruction.veil) * Math.min(1, rate * dt);
+  scene.fogDensity = cloudObstruction.veil * 0.028;
+}
+
 /** Advance simulation + visuals state by dt (no rendering). Shared by loop and tests. */
 function tick(dt: number): void {
   updateControls(controls, dt);
@@ -243,13 +286,13 @@ function tick(dt: number): void {
   lighting.update(host, atmo, daylight, twilight, state.altitude);
 
   // Exposure: slightly hotter in space for star/planet pop, softer in thick air.
-  pipeline.imageProcessing.exposure = 1.15 - atmo * 0.15;
+  pipeline.imageProcessing.exposure = 1.1 - atmo * 0.2;
 
   // Drive atmosphere + surface shaders. Each body gets the local sunlight factor so
   // its sky only lights up where the star reaches it.
   const sunToward = sun.direction.scale(-1);
-  // Unit vector from the camera to the real star body: the sky dome draws its sun
-  // disc/halo about this direction so the glare sits exactly on the visible sun.
+  // Unit vector from the camera to the real star body: the sky dome centres its
+  // thin-air aureole about this direction so the glare sits exactly on the visible sun.
   const solTowardView = sol.body.center.subtract(camera.position).normalize();
   for (const b of bodies) {
     const alt = bodyAltitude(b, ship.position);
@@ -268,6 +311,9 @@ function tick(dt: number): void {
   const starBright = Math.max((1 - sky) ** 3, (1 - daylight) * 0.85, 0.02);
   starfield.setBrightness(starBright);
 
+  // Sampled after the ship moved so the veil tracks the camera this tick.
+  updateCloudObstruction(dt);
+
   updateHud(hud, ship, state, bodies);
 }
 
@@ -276,6 +322,9 @@ engine.runRenderLoop(() => {
     const dt = Math.min(engine.getDeltaTime() / 1000, 0.05);
     tick(dt);
     cameraRig.update(dt);
+    // The rig moves the camera after the sim tick; re-sample the veil so the
+    // rendered frame's fog matches the camera's final position.
+    updateCloudObstruction(0);
   }
   scene.render();
 });

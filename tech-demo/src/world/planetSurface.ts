@@ -27,7 +27,7 @@ import { SkyPalette } from "../common/shaderChunks";
 import { attachTerrain, loadTerrainTextures, TerrainHandle, TerrainLook } from "./terrainMaterial";
 import { attachWetSand } from "./wetSand";
 import { buildGroundGeometry } from "./groundGeometry";
-import { buildClouds, buildNightLights } from "./skyExtras";
+import { buildClouds, buildNightLights, Clouds } from "./skyExtras";
 
 /** Ocean look, overridable per planet. */
 export interface OceanLook {
@@ -71,6 +71,8 @@ export interface SurfaceResult {
   ground: Mesh;
   water: Mesh | null;
   clouds: Mesh | null;
+  /** Volumetric deck handle (null when clouds are disabled). */
+  cloudDeck: Clouds | null;
   ocean: OceanResult | null;
   /** Ground texture blend handle (null when no terrain look was configured). */
   terrain: TerrainHandle | null;
@@ -217,7 +219,7 @@ export function buildPlanetSurface(
             skyStrength: 1.0,
             hazeTint: new Color3(1, 0.97, 0.92),
             hazeStrength: 0.25,
-            hazeG: 0.85,
+            hazeG: 0.7,
             sunTint: new Color3(1, 0.97, 0.92),
             sunGlow: 0.35,
           },
@@ -241,19 +243,28 @@ export function buildPlanetSurface(
       })
     : null;
 
-  // Night-side city lights + cloud deck (see skyExtras.ts).
+  // Night-side city lights + cloud deck (see skyExtras.ts). The deck is a
+  // camera post-process, so it needs the active camera; the planet center is
+  // synced below (makePlanet calls setCenter with the world position).
   const night = opts.nightLights
     ? buildNightLights(scene, name, { seed: opts.seed, radius: opts.radius })
     : null;
   night?.attachTo(ground);
   const clouds = opts.clouds
-    ? buildClouds(scene, name, {
-        radius: opts.radius,
-        relief: opts.relief,
-        segments: opts.segments,
-        coverage: opts.cloudCoverage,
-      })
+    ? buildClouds(
+        scene,
+        name,
+        {
+          radius: opts.radius,
+          relief: opts.relief,
+          segments: opts.segments,
+          coverage: opts.cloudCoverage,
+          seed: opts.seed,
+        },
+        scene.activeCamera ?? undefined,
+      )
     : null;
+  if (clouds && opts.position) clouds.setCenter(opts.position);
 
   const update = (dt: number, sunDir: Vector3, isHost = true): void => {
     ocean?.update(dt, sunDir, isHost);
@@ -265,5 +276,5 @@ export function buildPlanetSurface(
   void Color4;
   void ParticleSystem;
   void Texture;
-  return { ground, water, clouds: clouds?.mesh ?? null, ocean, terrain, update };
+  return { ground, water, clouds: clouds?.mesh ?? null, cloudDeck: clouds, ocean, terrain, update };
 }

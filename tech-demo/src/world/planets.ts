@@ -145,8 +145,8 @@ export function makePlanet(scene: Scene, opts: PlanetOptions): Body {
         skyTint: opts.skyTint ?? opts.atmosphereColor,
         skyStrength: opts.skyStrength ?? (warmHaze ? 1.4 : 1.0),
         hazeTint: opts.hazeTint ?? (warmHaze ? new Color3(1.0, 0.6, 0.32) : new Color3(1.0, 0.97, 0.92)),
-        hazeStrength: opts.hazeStrength ?? (warmHaze ? 0.55 : 0.32),
-        hazeG: 0.85,
+        hazeStrength: opts.hazeStrength ?? (warmHaze ? 0.45 : 0.22),
+        hazeG: 0.7,
         sunTint,
         sunGlow: 0.35,
       }
@@ -155,7 +155,7 @@ export function makePlanet(scene: Scene, opts: PlanetOptions): Body {
         skyStrength: 0,
         hazeTint: new Color3(0, 0, 0),
         hazeStrength: 0,
-        hazeG: 0.85,
+        hazeG: 0.7,
         sunTint,
         sunGlow: 0.6,
       };
@@ -181,7 +181,8 @@ export function makePlanet(scene: Scene, opts: PlanetOptions): Body {
   });
   // The ocean meshes stay at the origin (the shader places them with
   // uPlanetCenter), so only the clouds / night shell are moved here.
-  if (surface.clouds) surface.clouds.position.copyFrom(opts.position);
+  if (surface.cloudDeck) surface.cloudDeck.setCenter(opts.position);
+  else if (surface.clouds) surface.clouds.position.copyFrom(opts.position);
   const nightShell = scene.getMeshByName(`${opts.name}-night-shell`);
   if (nightShell) nightShell.position.copyFrom(opts.position);
 
@@ -194,16 +195,12 @@ export function makePlanet(scene: Scene, opts: PlanetOptions): Body {
       skyStrength: skyPalette.skyStrength,
       hazeTint: skyPalette.hazeTint,
       hazeStrength: skyPalette.hazeStrength,
-      hazeAnisotropy: 0.85,
+      hazeAnisotropy: 0.7,
       sunTint,
-      sunIntensity: 0.7,
+      sunIntensity: 0.45,
     });
     atmosphere.outer.position.copyFrom(opts.position);
     atmosphere.inner.position.copyFrom(opts.position);
-    const cloudMat = surface.clouds?.material as unknown as {
-      setVector3?: (n: string, v: Vector3) => void;
-    } | null;
-    cloudMat?.setVector3?.("planetCenter", opts.position);
   }
 
   // Vegetation is built last: it parents to the ground mesh and samples the
