@@ -39,13 +39,14 @@ export interface InputState {
   eased: { x: number; y: number };
   onToggleQuality: () => void;
   onSelectTarget: (index: number) => void;
+  onTogglePause: () => void;
 }
 
 const clamp1 = (v: number): number => clamp(v, -1, 1);
 
 export function createInput(
   canvas: HTMLCanvasElement,
-  opts: Pick<InputState, "onToggleQuality" | "onSelectTarget">,
+  opts: Pick<InputState, "onToggleQuality" | "onSelectTarget" | "onTogglePause">,
 ): InputState {
   const input: Record<string, boolean> = {};
   const pointer = { x: 0, y: 0 };
@@ -57,6 +58,15 @@ export function createInput(
   };
 
   addEventListener("keydown", (e) => {
+    // Esc toggles the pause overlay; kept outside the sim key map so it
+    // works even while the sim is frozen (held keys are cleared on toggle).
+    if (e.code === "Escape") {
+      if (e.repeat) return;
+      e.preventDefault();
+      clear();
+      opts.onTogglePause();
+      return;
+    }
     const token = keyToken(e);
     if (!HANDLED.has(token)) return;
     e.preventDefault();
@@ -103,6 +113,7 @@ export function createInput(
     eased,
     onToggleQuality: opts.onToggleQuality,
     onSelectTarget: opts.onSelectTarget,
+    onTogglePause: opts.onTogglePause,
   };
 }
 

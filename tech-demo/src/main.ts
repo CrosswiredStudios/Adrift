@@ -99,6 +99,18 @@ const state: FlightState = {
 const quality = createQualityPolicy(pipeline, bodies);
 let highQuality = true;
 
+// Pause menu: Esc toggles the overlay and freezes the sim tick while the
+// scene keeps rendering behind it. __game.step stays unpaused so headless
+// tests can still advance the sim deterministically.
+const pauseOverlay = document.getElementById("pause") as HTMLElement;
+const resumeButton = document.getElementById("resume") as HTMLButtonElement;
+let paused = false;
+function setPaused(on: boolean): void {
+  paused = on;
+  pauseOverlay.classList.toggle("visible", on);
+}
+resumeButton.addEventListener("click", () => setPaused(false));
+
 const controls = createInput(canvas, {
   onToggleQuality: () => {
     highQuality = quality.toggle();
@@ -107,6 +119,7 @@ const controls = createInput(canvas, {
   onSelectTarget: (i: number) => {
     if (bodies[i]) state.target = bodies[i];
   },
+  onTogglePause: () => setPaused(!paused),
 });
 const input = controls.input;
 const pointer = controls.pointer;
@@ -141,6 +154,8 @@ const game = {
   sun: sol,
   bankDeg: () => (bankAngle(ship, bodies) * 180) / Math.PI,
   step: (dt: number) => tick(dt),
+  paused: () => paused,
+  setPaused: (on: boolean) => setPaused(on),
   ocean: () => ({
     vael: vael.surface?.ocean?.stats() ?? null,
     tethys: tethys.surface?.ocean?.stats() ?? null,
@@ -257,9 +272,11 @@ function tick(dt: number): void {
 }
 
 engine.runRenderLoop(() => {
-  const dt = Math.min(engine.getDeltaTime() / 1000, 0.05);
-  tick(dt);
-  cameraRig.update(dt);
+  if (!paused) {
+    const dt = Math.min(engine.getDeltaTime() / 1000, 0.05);
+    tick(dt);
+    cameraRig.update(dt);
+  }
   scene.render();
 });
 addEventListener("resize", () => engine.resize());

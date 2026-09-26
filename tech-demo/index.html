@@ -9,7 +9,14 @@
 <body>
   <canvas id="scene"></canvas>
   <div id="hud"></div>
-  <div id="help">W/S pitch · A/D turn · Q/E roll · mouse steer · ↑/↓ throttle · Shift boost · Space/C brake · 1/2/3 targets · H quality</div>
+  <div id="help">W/S pitch · A/D turn · Q/E roll · mouse steer · ↑/↓ throttle · Shift boost · Space/C brake · 1/2/3 targets · H quality · Esc pause</div>
+  <div id="pause">
+    <div class="pause-panel">
+      <h1>Paused</h1>
+      <button id="resume" type="button">Resume</button>
+      <p class="pause-controls">W/S pitch · A/D turn · Q/E roll · mouse steer · ↑/↓ throttle · Shift boost · Space/C brake · 1/2/3 targets · H quality · Esc resume</p>
+    </div>
+  </div>
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>
