@@ -1,0 +1,4 @@
+html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+#scene { width: 100%; height: 100%; display: block; }
+#hud { position: fixed; top: 12px; left: 12px; color: #cfe8ff; font: 13px/1.5 monospace; white-space: pre; }
+#help { position: fixed; bottom: 10px; left: 12px; color: #8fb4d8; font: 12px monospace; }
