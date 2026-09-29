@@ -1,5 +1,15 @@
 import { Constants } from "@babylonjs/core/Engines/constants";
-import { Camera, Color3, Effect, PostProcess, RawTexture, RawTexture3D, Scene, Texture, Vector3 } from "@babylonjs/core";
+import {
+  Camera,
+  Color3,
+  Effect,
+  PostProcess,
+  RawTexture,
+  RawTexture3D,
+  Scene,
+  Texture,
+  Vector3,
+} from "@babylonjs/core";
 import type { DepthRenderer } from "@babylonjs/core";
 import { mulberry32 } from "../common/rng";
 
@@ -595,7 +605,12 @@ async function loadVolumeNoiseTexture(scene: Scene, result: VolumeTextures): Pro
     if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
     const buffer = await response.arrayBuffer();
     const view = new DataView(buffer);
-    const signature = String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+    const signature = String.fromCharCode(
+      view.getUint8(0),
+      view.getUint8(1),
+      view.getUint8(2),
+      view.getUint8(3),
+    );
     if (signature !== "BIN\n" && signature !== "BIN\0") throw new Error("Invalid Shadertoy volume header.");
     const width = view.getInt32(4, true);
     const height = view.getInt32(8, true);

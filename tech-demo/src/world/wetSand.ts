@@ -35,22 +35,22 @@ export class WetSandPlugin extends MaterialPluginBase {
     super(material, "WetSand", 210, { WET_SAND: true }, true, true);
   }
 
-  public getClassName(): string {
+  public override getClassName(): string {
     return "WetSand";
   }
 
-  public getSamplers(samplers: string[]): void {
+  public override getSamplers(samplers: string[]): void {
     samplers.push("uWetHeightMap");
   }
 
-  public getUniforms(): { ubo: { name: string; size: number; type: string }[]; fragment: string } {
+  public override getUniforms(): { ubo: { name: string; size: number; type: string }[]; fragment: string } {
     return {
       ubo: [{ name: "uWetTime", size: 1, type: "float" }],
       fragment: "",
     };
   }
 
-  public bindForSubMesh(
+  public override bindForSubMesh(
     uniformBuffer: UniformBuffer,
     _scene: unknown,
     _engine: unknown,
@@ -68,7 +68,7 @@ export class WetSandPlugin extends MaterialPluginBase {
     this.uWetTime = t;
   }
 
-  public getCustomCode(shaderType: string): { [point: string]: string } | null {
+  public override getCustomCode(shaderType: string): { [point: string]: string } | null {
     const cfg = WET_SAND.get(this._material);
     if (!cfg) return null;
     if (shaderType === "vertex") {

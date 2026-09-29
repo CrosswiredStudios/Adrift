@@ -10,7 +10,7 @@ import {
   DefaultRenderingPipeline,
   ImageProcessingConfiguration,
 } from "@babylonjs/core";
-import { atmosphereFactor, bodyAltitude, terrainHeightAt, isOverWater, Body } from "./world/planets";
+import { atmosphereFactor, bodyAltitude, terrainHeightAt, isOverWater } from "./world/planets";
 import { createShip, updateShip, FlightState, bankAngle } from "./flight/flight";
 import { updateHud } from "./app/hud";
 import { TerrainHandle } from "./world/terrainMaterial";

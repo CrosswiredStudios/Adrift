@@ -23,7 +23,10 @@ test("identify white disc", async ({ page }) => {
       out[k] = { dist: Math.round(dist), dot: +dot.toFixed(3) };
     }
     out.camPos = cam.position.asArray().map((n: number) => Math.round(n));
-    out.camFwd = cam.getForwardRay().direction.asArray().map((n: number) => +n.toFixed(3));
+    out.camFwd = cam
+      .getForwardRay()
+      .direction.asArray()
+      .map((n: number) => +n.toFixed(3));
     return out;
   });
   console.log("proj " + JSON.stringify(proj));

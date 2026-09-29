@@ -15,9 +15,7 @@ test("Esc pauses the sim with an overlay and resumes", async ({ page }) => {
 
   // Esc opens the overlay and freezes the sim across realtime frames.
   await page.keyboard.press("Escape");
-  await page.waitForFunction(
-    () => document.getElementById("pause")?.classList.contains("visible") === true,
-  );
+  await page.waitForFunction(() => document.getElementById("pause")?.classList.contains("visible") === true);
   const frozen = await page.evaluate(() => {
     const g = (window as unknown as { __game: any }).__game;
     return { paused: g.paused(), pos: g.ship.position.asArray() };
@@ -33,25 +31,15 @@ test("Esc pauses the sim with an overlay and resumes", async ({ page }) => {
 
   // Esc toggles back off; the sim advances again via deterministic steps.
   await page.keyboard.press("Escape");
-  await page.waitForFunction(
-    () => document.getElementById("pause")?.classList.contains("visible") === false,
-  );
-  expect(await page.evaluate(() => (window as unknown as { __game: any }).__game.paused())).toBe(
-    false,
-  );
+  await page.waitForFunction(() => document.getElementById("pause")?.classList.contains("visible") === false);
+  expect(await page.evaluate(() => (window as unknown as { __game: any }).__game.paused())).toBe(false);
   await stepFrames(page, 60, 1 / 60);
 
   // The Resume button path also pauses and resumes.
   await page.keyboard.press("Escape");
-  await page.waitForFunction(
-    () => document.getElementById("pause")?.classList.contains("visible") === true,
-  );
+  await page.waitForFunction(() => document.getElementById("pause")?.classList.contains("visible") === true);
   await page.click("#resume");
-  await page.waitForFunction(
-    () => document.getElementById("pause")?.classList.contains("visible") === false,
-  );
-  expect(await page.evaluate(() => (window as unknown as { __game: any }).__game.paused())).toBe(
-    false,
-  );
+  await page.waitForFunction(() => document.getElementById("pause")?.classList.contains("visible") === false);
+  expect(await page.evaluate(() => (window as unknown as { __game: any }).__game.paused())).toBe(false);
   expectNoErrors(errors);
 });

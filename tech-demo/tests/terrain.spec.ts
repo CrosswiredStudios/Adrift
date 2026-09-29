@@ -1,4 +1,4 @@
-import { test, expect, Page } from "@playwright/test";
+import { test, expect } from "@playwright/test";
 import { boot, collectErrors, expectNoErrors, orbitAim, placeAt, stepFrames } from "./helpers";
 
 /**
@@ -8,8 +8,6 @@ import { boot, collectErrors, expectNoErrors, orbitAim, placeAt, stepFrames } fr
  * Headless software GL renders at a few fps, so placement goes through
  * `__game.step` and screenshots allow >= 5 s per state (see repo memory).
  */
-
-type Dir = number[];
 
 test("ground textures: plugin attached, textures load, no shader errors", async ({ page }) => {
   const problems = collectErrors(page);

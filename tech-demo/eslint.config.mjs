@@ -1,10 +1,12 @@
 import js from "@eslint/js";
 
 // NOTE: typescript-eslint does not support TypeScript 7 yet, so ESLint only
-// lints JS/MJS configs here. TypeScript correctness is enforced by
-// `npm run typecheck` (tsc --noEmit, strict, includes src + tests) and style
-// by `npm run format:check` (prettier). Revisit a TS parser when
-// typescript-eslint supports TS >= 7.1.
+// lints the JS config files. TypeScript sources are linted by the compiler:
+// tsconfig.json turns on noUnusedLocals / noUnusedParameters /
+// noImplicitReturns / noImplicitOverride / noFallthroughCasesInSwitch, and
+// `npm run typecheck` fails on any of them. Style is enforced by prettier.
+// When typescript-eslint supports TS 7 (or if you adopt Biome/oxlint), extend
+// this config to cover src/ and tests/.
 
 export default [
   js.configs.recommended,

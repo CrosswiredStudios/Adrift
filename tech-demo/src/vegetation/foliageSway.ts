@@ -33,11 +33,11 @@ export class FoliageSwayPlugin extends MaterialPluginBase {
     super(material, "FoliageSway", 215, { FOLIAGE_SWAY: true }, true, true);
   }
 
-  public getClassName(): string {
+  public override getClassName(): string {
     return "FoliageSway";
   }
 
-  public bindForSubMesh(
+  public override bindForSubMesh(
     _uniformBuffer: UniformBuffer,
     _scene: unknown,
     _engine: unknown,
@@ -48,7 +48,7 @@ export class FoliageSwayPlugin extends MaterialPluginBase {
     this._material.getEffect()?.setFloat("uSwayTime", this.uSwayTime);
   }
 
-  public getCustomCode(shaderType: string): { [point: string]: string } | null {
+  public override getCustomCode(shaderType: string): { [point: string]: string } | null {
     const cfg = SWAY.get(this._material);
     if (!cfg) return null;
     if (shaderType === "vertex") {

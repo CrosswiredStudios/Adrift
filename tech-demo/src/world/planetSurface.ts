@@ -1,26 +1,10 @@
-import {
-  Scene,
-  Mesh,
-  VertexData,
-  Vector3,
-  Color3,
-  Color4,
-  PBRMaterial,
-  ShaderMaterial,
-  StandardMaterial,
-  DynamicTexture,
-  ParticleSystem,
-  Texture,
-  RawTexture,
-} from "@babylonjs/core";
+import { Scene, Mesh, VertexData, Vector3, Color3, PBRMaterial, Texture, RawTexture } from "@babylonjs/core";
 import { defaultShores, terrainHeightNormalized } from "../common/heightField";
 import type { ShoresOptions } from "../common/heightField";
 // Re-exported so existing planet/sun call sites keep working; new code
 // should import from ../common/heightField directly.
 export { defaultShores, terrainHeightNormalized };
 export type { ShoresOptions };
-import { Constants } from "@babylonjs/core/Engines/constants";
-import { fbm3 } from "../common/noise";
 import { createOcean, OceanResult } from "../ocean/ocean";
 import { WaveSettings } from "../ocean/oceanWaves";
 import { SkyPalette } from "../common/shaderChunks";
@@ -273,8 +257,5 @@ export function buildPlanetSurface(
     night?.update(sunDir);
   };
 
-  void Color4;
-  void ParticleSystem;
-  void Texture;
   return { ground, water, clouds: clouds?.mesh ?? null, cloudDeck: clouds, ocean, terrain, update };
 }

@@ -1,12 +1,4 @@
-import {
-  Color3,
-  DynamicTexture,
-  Material,
-  MaterialPluginBase,
-  Scene,
-  Texture,
-  UniformBuffer,
-} from "@babylonjs/core";
+import { Color3, Material, MaterialPluginBase, Scene, Texture, UniformBuffer } from "@babylonjs/core";
 import { glslNum } from "../common/shaderChunks";
 import { PluginRegistry } from "../common/materialPlugin";
 import {
@@ -165,26 +157,26 @@ class TerrainPlugin extends MaterialPluginBase {
     super(material, "TerrainTextures", 205, { TERRAIN_TEXTURES: true }, true, true);
   }
 
-  public getClassName(): string {
+  public override getClassName(): string {
     return "TerrainTextures";
   }
 
-  public getSamplers(samplers: string[]): void {
+  public override getSamplers(samplers: string[]): void {
     samplers.push("uTerrainBase", "uTerrainRock", "uTerrainBaseN", "uTerrainRockN");
   }
 
-  public getAttributes(attributes: string[]): void {
+  public override getAttributes(attributes: string[]): void {
     attributes.push("terrainUv");
   }
 
-  public getUniforms(): { ubo: { name: string; size: number; type: string }[]; fragment: string } {
+  public override getUniforms(): { ubo: { name: string; size: number; type: string }[]; fragment: string } {
     return {
       ubo: [{ name: "uTerrainDebug", size: 1, type: "float" }],
       fragment: "",
     };
   }
 
-  public bindForSubMesh(
+  public override bindForSubMesh(
     uniformBuffer: UniformBuffer,
     _scene: unknown,
     _engine: unknown,
@@ -202,7 +194,7 @@ class TerrainPlugin extends MaterialPluginBase {
     uniformBuffer.updateFloat("uTerrainDebug", this.uTerrainDebug);
   }
 
-  public getCustomCode(shaderType: string): { [point: string]: string } | null {
+  public override getCustomCode(shaderType: string): { [point: string]: string } | null {
     const cfg = TERRAIN.get(this._material);
     if (!cfg) return null;
     const { look } = cfg;
