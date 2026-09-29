@@ -64,6 +64,8 @@ export class BodyView {
   star: StarVisual | null = null;
   atmo: AtmoParams | null = null;
   clouds: CloudParams | null = null;
+  /** Sea-level radius (m) on ocean worlds, else null. */
+  seaRadius: number | null = null;
   private wetSand: WetSandPlugin | null = null;
 
   constructor(
@@ -191,6 +193,7 @@ export class BodyView {
     }
     if (def.atmosphere) {
       const ground = sea !== null ? seaRadius(shape) : shape.radius;
+      if (sea !== null) this.seaRadius = seaRadius(shape);
       this.atmo = atmoParams(def.radius, ground, def.atmosphere);
     }
     if (def.clouds) {

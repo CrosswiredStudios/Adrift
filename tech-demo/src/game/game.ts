@@ -640,6 +640,10 @@ export class Game {
       sunIlluminance: SKY_ILLUMINANCE,
       bodies: atmoBodies.slice(0, 2).reverse(),
       clouds: cloudFrame,
+      sea:
+        focusView.seaRadius !== null
+          ? { center: focusFrame.position.subtract(camI), radius: focusView.seaRadius }
+          : null,
     });
 
     // Terrain LOD, oceans, vegetation per body (camera in each body frame).

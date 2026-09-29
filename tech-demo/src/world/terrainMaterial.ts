@@ -194,7 +194,25 @@ class TerrainPlugin extends MaterialPluginBase {
             float tMorphD = length((world * vec4(positionUpdated, 1.0)).xyz);
             tMorphK = smoothstep(0.55 * ${TERRAIN_MORPH_KIND}.w, 0.9 * ${TERRAIN_MORPH_KIND}.w, tMorphD);
           }
-          positionUpdated += ${TERRAIN_MORPH_KIND}.xyz * tMorphK;`,
+          positionUpdated += ${TERRAIN_MORPH_KIND}.xyz * tMorphK;${
+            cfg.seaLevel !== null
+              ? `
+          // Far away, coarse chunks interpolate the seabed/shore between widely
+          // spaced vertices and can poke up through the (smooth) sea surface.
+          // Sink ground that is within a distance-scaled band of sea level so
+          // it stays under the water; high ground is untouched.
+          {
+            float tSeaR = ${glslNum(cfg.radius + cfg.seaLevel)};
+            float tR = length(positionUpdated);
+            float tDist = length((world * vec4(positionUpdated, 1.0)).xyz);
+            float tBand = clamp(tDist * 0.012 - 2.0, 0.0, 40.0);
+            if (tBand > 0.0) {
+              float tSink = tBand * (1.0 - smoothstep(tSeaR, tSeaR + tBand, tR));
+              positionUpdated *= (tR - tSink) / tR;
+            }
+          }`
+              : ""
+          }`,
         CUSTOM_VERTEX_UPDATE_NORMAL: `
           normalUpdated = normalize(normalUpdated + ${TERRAIN_MORPH_NORMAL_KIND} * tMorphK);`,
         CUSTOM_VERTEX_MAIN_END: `

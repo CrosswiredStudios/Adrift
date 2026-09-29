@@ -317,7 +317,13 @@ void main() {
   foam = clamp(foam, 0.0, 1.0);
   surfaceCol = mix(surfaceCol, uFoamColor * max(uSunAmbient, 0.05), foam);
 
-  float alpha = mix(uShallowAlpha, 1.0, deepMix);
+  // Opacity follows the light path through the water along the view ray
+  // (vertical depth / cos of the viewing angle), not the vertical depth
+  // alone: at a glancing angle even shallow water is opaque, so distant
+  // shallows no longer show the sea floor like glass.
+  float viewCos = max(dot(up, V), 0.03);
+  float viewPathT = clamp(vDepth / viewCos / max(uDepthFade, 0.5), 0.0, 1.0);
+  float alpha = mix(uShallowAlpha, 1.0, smoothstep(0.04, 1.0, max(viewPathT, deepMix)));
   alpha = max(alpha, fresnel * (1.0 - foam));
   alpha = max(alpha, foam);
 

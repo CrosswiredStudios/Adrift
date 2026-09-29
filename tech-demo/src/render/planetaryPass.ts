@@ -76,6 +76,13 @@ export interface PlanetaryFrame {
   /** Ordered far -> near. */
   bodies: AtmoBodyFrame[];
   clouds: CloudFrame | null;
+  /**
+   * The sea surface of the focus body (render-space centre, radius). The
+   * water is transparent, so it isn't in the depth texture; the passes
+   * intersect this sphere themselves so haze, clouds and shafts stop at the
+   * water instead of at the sea floor.
+   */
+  sea: { center: Vector3; radius: number } | null;
 }
 
 export type SkyQuality = "ultra" | "high" | "balanced" | "lite";
@@ -158,6 +165,7 @@ uniform vec3 uCamRight;
 uniform vec3 uCamUp;
 uniform vec3 uCamFwd;
 uniform vec2 uTanHalf; // tan(fov/2) * aspect, tan(fov/2)
+uniform vec4 uSea; // sea sphere: render-space centre, radius (0 = none)
 uniform sampler2D uDepth;
 vec3 viewRay(vec2 uv) {
   vec2 s = uv * 2.0 - 1.0;
@@ -166,8 +174,18 @@ vec3 viewRay(vec2 uv) {
 /** Distance along the (unnormalized) view ray to the scene, or 1e20 for sky. */
 float sceneT(vec2 uv, vec3 ray) {
   float z = texture2D(uDepth, uv).r;
-  if (z <= 0.0) return 1e20;
-  return z * length(ray); // ray has unit forward component
+  float t = z <= 0.0 ? 1e20 : z * length(ray); // ray has unit forward component
+  if (uSea.w > 0.0) {
+    vec3 d = normalize(ray);
+    vec3 oc = uCamPos - uSea.xyz;
+    float b = dot(oc, d);
+    float h = b * b - (dot(oc, oc) - uSea.w * uSea.w);
+    if (h > 0.0) {
+      float tw = -b - sqrt(h);
+      if (tw > 0.0) t = min(t, tw);
+    }
+  }
+  return t;
 }
 float ign(vec2 px) { return fract(52.9829189 * fract(0.06711056 * px.x + 0.00583715 * px.y)); }
 `;
@@ -436,7 +454,7 @@ export class PlanetaryPass {
     const engine = scene.getEngine() as Engine;
     Effect.ShadersStore["adriftCloudsFragmentShader"] = CLOUD_FRAGMENT;
     Effect.ShadersStore["adriftCompositeFragmentShader"] = COMPOSITE_FRAGMENT;
-    const camUniforms = ["uCamPos", "uCamRight", "uCamUp", "uCamFwd", "uTanHalf"];
+    const camUniforms = ["uCamPos", "uCamRight", "uCamUp", "uCamFwd", "uTanHalf", "uSea"];
     const hdr = Constants.TEXTURETYPE_HALF_FLOAT;
 
     this.volume = new CloudVolumeData(makeVolumeNoiseData(1337));
@@ -594,6 +612,9 @@ export class PlanetaryPass {
     e.setVector3("uCamUp", up);
     e.setVector3("uCamFwd", fwd);
     e.setFloat2("uTanHalf", t * aspect, t);
+    const sea = this.frame?.sea;
+    if (sea) e.setFloat4("uSea", sea.center.x, sea.center.y, sea.center.z, sea.radius);
+    else e.setFloat4("uSea", 0, 0, 0, 0);
   }
 
   private makeVolumeTexture(v: CloudVolumeData): RawTexture3D {
