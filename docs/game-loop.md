@@ -30,7 +30,7 @@ unmarked = design only.
 ### Flight
 
 - **[done]** Newtonian model with real gravity wells and orbits, atmospheric drag and heating.
-- **[partial]** Flight assist: rate-command rotation, auto-level, hover, gentle-descent landing (collision warning: not yet).
+- **[partial]** Flight assist (Outer Wilds style): rate-command rotation, match velocity / hover, capped-speed creep for landings, landing mode (collision warning: not yet).
 - **[done]** Seamless scale: floating origin + logarithmic depth, bodies on rails, sphere-of-influence hand-off.
 
 ### Narrative & Discovery

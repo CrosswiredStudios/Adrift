@@ -16,6 +16,7 @@ export type ButtonAction =
   | "inventory"
   | "toggleAssist"
   | "matchVelocity"
+  | "landingMode"
   | "boost"
   | "jump"
   | "sprint"
@@ -69,6 +70,7 @@ export function defaultBindings(): BindingMap {
       inventory: [key("Tab"), pad(8)],
       toggleAssist: [key("KeyT"), pad(3)],
       matchVelocity: [key("KeyX"), pad(1)],
+      landingMode: [key("KeyL"), pad(12)],
       boost: [key("ShiftLeft"), key("ShiftRight"), pad(10)],
       jump: [key("Space"), pad(0)],
       sprint: [key("ShiftLeft"), key("ShiftRight"), pad(10)],

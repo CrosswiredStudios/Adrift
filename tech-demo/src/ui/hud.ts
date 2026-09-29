@@ -24,10 +24,7 @@ export interface HudModel {
   /** Orbital (inertial, body-relative) speed (m/s). */
   orbitalSpeed?: number;
   assist?: boolean;
-  /** Assisted handling: 1 = hover, 0 = space. */
-  hover?: number;
-  /** Space throttle (-0.25..1). */
-  throttle?: number;
+  landingMode?: boolean;
   heat?: number;
   hull?: number;
   landed?: boolean;
@@ -93,7 +90,7 @@ export class Hud {
     const lines: string[] = [];
     if (m.mode === "ship") {
       lines.push(
-        `SHIP  ${!m.assist ? "MANUAL" : (m.hover ?? 1) >= 0.5 ? "HOVER" : `SPACE  thr ${Math.round((m.throttle ?? 0) * 100)}%`}${m.landed ? "  LANDED" : m.floating ? "  AFLOAT" : ""}   ${m.bodyName} ${clock}`,
+        `SHIP  ${m.assist ? "ASSIST" : "MANUAL"}${m.landingMode ? "  LANDING" : ""}${m.landed ? "  LANDED" : m.floating ? "  AFLOAT" : ""}   ${m.bodyName} ${clock}`,
       );
       lines.push(
         `alt ${dist(Math.max(0, m.altitude))}  spd ${m.speed.toFixed(1)} m/s  v/s ${m.verticalSpeed.toFixed(1)}  orb ${(m.orbitalSpeed ?? 0).toFixed(0)}`,

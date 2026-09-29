@@ -21,17 +21,30 @@ pauses). A standard gamepad also works. The pause menu lists the live bindings.
 | Sprint / boost | `Shift` | `Shift` |
 | Interact, board, step out | `F` | `F` |
 | Inventory + crafting | `Tab` | `Tab` |
-| Flight assist on/off | — | `T` |
-| Match velocity (brake to rest) | — | `X` |
+| Rotation assist on/off | — | `T` |
+| Match velocity / hover (hold) | — | `X` |
+| Landing mode | — | `L` |
 | Camera (chase / cockpit) | — | `V` |
 | Target Vael / Tethys / Cinder / Vesper | `1`–`4` | `1`–`4` |
 | Quality tier | `H` | `H` |
 | Pause (Save / Load) | `Esc` | `Esc` |
 
-Flight tips: with assist on, releasing the controls holds a hover near the
-ground and holding `C` lands you gently. In space, assist only stops rotation —
-you keep your velocity, so orbits work. Vael's orbital speed at the surface is
-about 140 m/s.
+Flight handles like Outer Wilds: the thrusters push along the ship's own
+axes (`W/S` forward/back, `A/D` sideways, `Space`/`C` up/down, `Shift`
+boosts forward thrust), they spool up over a moment so taps give fine
+nudges, gravity always pulls and there is no speed limit.
+
+- **Rotation assist** (on by default, `T`): the mouse or stick sets a turn
+  rate and the ship stops turning when you let go. Off, rotation has
+  momentum too.
+- **Match velocity** (hold `X`): brakes to rest relative to the ground and
+  holds you there against gravity — that's how you hover. Thrusting while
+  holding it creeps along that axis at about 6 m/s, so `X` + `C` is a
+  controlled descent onto a landing spot.
+- **Landing mode** (`L`): keeps the belly pointed at the ground while
+  leaving the heading to you (`LANDING` on the HUD).
+
+Vael's orbital speed at the surface is about 140 m/s.
 
 ## What the demo shows
 
@@ -66,6 +79,12 @@ npm test            # typecheck + lint + format check + unit tests (Vitest)
 npm run test:e2e    # production build + Playwright end-to-end suites
 npm run test:shots  # screenshot tour into test-results/shots/
 ```
+
+Troubleshooting (Windows): if `npm run dev` says `'vite'` (or even `'node'`)
+"is not recognized", the `Path` environment variable is probably longer than
+the 8191 characters `cmd.exe` accepts (npm runs scripts through `cmd.exe`).
+Shorten it (remove stale/duplicate entries), or run the tools directly, e.g.
+`node node_modules/vite/bin/vite.js`.
 
 End-to-end tests run on software WebGL, so they drive the simulation with
 `window.__game.step(seconds)` instead of real time. The same `__game` object is

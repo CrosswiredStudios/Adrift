@@ -99,9 +99,11 @@ export interface GameOptions {
 export class VirtualStick {
   x = 0;
   y = 0;
+  // Stiff spring: the ship turns while the mouse moves and stops right after
+  // (mouse-look feel), rather than drifting on like a sprung joystick.
   constructor(
-    public gain = 9,
-    public spring = 3.5,
+    public gain = 16,
+    public spring = 25,
   ) {}
   update(dx: number, dy: number, dt: number): void {
     this.x = clamp(this.x + dx * this.gain, -1, 1);
@@ -407,6 +409,10 @@ export class Game {
     if (input.pressed("cameraToggle") && sim.mode === "ship") {
       this.cameraMode = this.cameraMode === "chase" ? "cockpit" : "chase";
       this.chase.reset();
+    }
+    if (input.pressed("landingMode") && sim.mode === "ship") {
+      sim.ship.landingMode = !sim.ship.landingMode;
+      this.events.emit("toast", { text: `Landing mode ${sim.ship.landingMode ? "on" : "off"}` });
     }
     if (input.pressed("toggleAssist") && sim.mode === "ship") {
       sim.ship.assist = !sim.ship.assist;
@@ -737,8 +743,7 @@ export class Game {
         verticalSpeed: ship.verticalSpeed,
         orbitalSpeed: vI.length(),
         assist: ship.assist,
-        hover: ship.hoverFactor,
-        throttle: ship.throttle,
+        landingMode: ship.landingMode,
         heat: ship.heat,
         hull: ship.hull,
         landed: ship.landed,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Vector3 } from "@babylonjs/core";
+import { Quaternion, Vector3 } from "@babylonjs/core";
 import { ShipSim, emptyControls, type ShipEnvironment } from "./shipSim";
 
 const R = 2000;
@@ -54,45 +54,72 @@ describe("ShipSim", () => {
     expect(Math.abs(Vector3.Dot(nose, up))).toBeLessThan(0.1); // still level
   });
 
-  it("assist hovers: lift off, release, altitude holds", () => {
+  it("thrusters lift off; holding match velocity hovers in place", () => {
     const e = env({ atmo: 900 });
     const ship = new ShipSim();
     ship.placeOnSurface(up, north, e);
     const c = emptyControls();
     c.thrust.y = 1;
-    run(ship, 1.5, e, c);
+    run(ship, 2, e, c);
     c.thrust.y = 0;
-    run(ship, 3, e, c); // let the damping take the climb out
+    c.matchVelocity = true;
+    run(ship, 3, e, c);
     const alt0 = ship.altitude;
-    run(ship, 5, e, c);
+    run(ship, 4, e, c);
     expect(alt0).toBeGreaterThan(5);
-    expect(Math.abs(ship.altitude - alt0)).toBeLessThan(1.5);
-    expect(ship.vel.length()).toBeLessThan(0.5);
+    expect(Math.abs(ship.altitude - alt0)).toBeLessThan(0.5);
+    expect(ship.vel.length()).toBeLessThan(0.3);
+    // Let go and gravity takes over (no automatic hover).
+    c.matchVelocity = false;
+    run(ship, 1, e, c);
+    expect(ship.verticalSpeed).toBeLessThan(-5);
   });
 
-  it("assist: holding down descends at a commanded rate and touches down gently", () => {
+  it("releasing a hover just above the ground sets the ship down gently", () => {
     const e = env({ atmo: 900 });
     const ship = new ShipSim();
     ship.placeOnSurface(up, north, e);
-    ship.pos.y += 60;
+    ship.pos.y += 1.2;
     ship.landed = false;
-    const c = emptyControls();
-    c.thrust.y = -0.5;
     let impacts = 0;
-    let maxDescent = 0;
-    for (let i = 0; i < 60 * 30 && !ship.landed; i++) {
-      ship.step(1 / 60, c, e, { impact: () => impacts++ });
-      maxDescent = Math.max(maxDescent, -ship.verticalSpeed);
-    }
+    run(ship, 3, e, emptyControls(), { impact: () => impacts++ });
     expect(ship.landed).toBe(true);
-    expect(maxDescent).toBeLessThan(11); // ~0.5 x 20 m/s command
     expect(ship.hull).toBe(1);
     expect(impacts).toBe(0);
-    // Releasing the stick on the ground doesn't lift it back into a hover.
-    c.thrust.y = 0;
-    run(ship, 3, e, c);
+  });
+
+  it("thrusting while holding match velocity creeps at a capped speed", () => {
+    const e = env({ atmo: 900 });
+    const ship = new ShipSim();
+    ship.pos.set(0, R + 60, 0);
+    const c = emptyControls();
+    c.matchVelocity = true;
+    c.thrust.y = -1;
+    let maxDown = 0;
+    let impacts = 0;
+    for (let i = 0; i < 60 * 20 && !ship.landed; i++) {
+      ship.step(1 / 60, c, e, { impact: () => impacts++ });
+      maxDown = Math.max(maxDown, -ship.verticalSpeed);
+    }
     expect(ship.landed).toBe(true);
-    expect(ship.sleeping).toBe(true);
+    expect(maxDown).toBeLessThan(6.5);
+    expect(maxDown).toBeGreaterThan(5);
+    expect(impacts).toBe(0);
+    expect(ship.hull).toBe(1);
+  });
+
+  it("thrusters spool up: a short tap gives a small nudge", () => {
+    const e = env();
+    const ship = new ShipSim();
+    ship.pos.set(0, R + 5000, 0);
+    ship.vel.set(0, Math.sqrt(MU / (R + 5000)) * 0, 0);
+    const c = emptyControls();
+    c.thrust.z = 1;
+    const v0 = Vector3.Dot(ship.vel, ship.axis(Vector3.Forward()));
+    run(ship, 0.05, e, c);
+    const tap = Vector3.Dot(ship.vel, ship.axis(Vector3.Forward())) - v0;
+    expect(tap).toBeGreaterThan(0);
+    expect(tap).toBeLessThan(0.5 * 24 * 0.05); // well under full thrust
   });
 
   it("without assist the ship falls (pure Newtonian)", () => {
@@ -145,56 +172,21 @@ describe("ShipSim", () => {
     expect((maxR - minR) / r).toBeLessThan(0.01);
   });
 
-  it("hover: flies like a drone, level, and holds position when released", () => {
+  it("landing mode turns the belly toward the ground but leaves the heading", () => {
     const e = env({ atmo: 900 });
     const ship = new ShipSim();
-    ship.placeOnSurface(up, north, e);
-    ship.pos.y += 40;
-    ship.landed = false;
+    ship.pos.set(0, R + 200, 0);
+    // Tilt the ship 50 degrees about its forward axis and pitch it 30 degrees.
+    ship.att.copyFrom(
+      Quaternion.RotationAxis(new Vector3(0, 0, 1), 0.87).multiply(
+        Quaternion.RotationAxis(new Vector3(1, 0, 0), 0.5),
+      ),
+    );
+    ship.landingMode = true;
     const c = emptyControls();
-    c.thrust.z = 1;
-    run(ship, 4, e, c);
-    const fwd = Vector3.Dot(ship.vel, north);
-    expect(fwd).toBeGreaterThan(35); // ~hover.forward
-    expect(Math.abs(ship.verticalSpeed)).toBeLessThan(1);
-    expect(Math.abs(Vector3.Dot(ship.axis(Vector3.Up()), up) - 1)).toBeLessThan(0.02); // level
-    c.thrust.z = 0;
-    run(ship, 3, e, c);
-    expect(ship.vel.length()).toBeLessThan(0.5);
-    // Mouse yaw turns it about the vertical.
-    c.rotate.y = 1;
-    run(ship, 1, e, c);
-    const nose = ship.axis(Vector3.Forward());
-    expect(Vector3.Dot(nose, north)).toBeLessThan(0.6);
-    expect(Math.abs(Vector3.Dot(nose, up))).toBeLessThan(0.05);
-  });
-
-  it("space: the throttle cruises along the nose and the velocity follows turns", () => {
-    const e = env();
-    const ship = new ShipSim();
-    ship.pos.set(0, R + 5000, 0); // well above the hover ceiling
-    const c = emptyControls();
-    c.thrust.z = 1;
-    run(ship, 1, e, c); // throttle -> 0.6
-    c.thrust.z = 0;
-    run(ship, 8, e, c);
-    const speed = ship.vel.length();
-    expect(speed).toBeGreaterThan(250);
-    expect(Vector3.Dot(ship.vel.clone().normalize(), ship.axis(Vector3.Forward()))).toBeGreaterThan(0.99);
-    // Yaw 90 degrees: the velocity swings round with the nose.
-    c.rotate.y = 1;
-    run(ship, Math.PI / 2 / 1.1, e, c);
-    c.rotate.y = 0;
-    run(ship, 9, e, c); // 90 degrees at 300 m/s is ~420 m/s of delta-v at 70 m/s^2
-    expect(Vector3.Dot(ship.vel.clone().normalize(), ship.axis(Vector3.Forward()))).toBeGreaterThan(0.98);
-    expect(Math.abs(ship.vel.length() - ship.throttle * 500)).toBeLessThan(10);
-    // Match velocity: full stop, and nothing drifts afterwards (gravity cancelled).
     c.matchVelocity = true;
-    run(ship, 8, e, c);
-    c.matchVelocity = false;
-    const p0 = ship.pos.clone();
-    run(ship, 5, e, c);
-    expect(Vector3.Distance(p0, ship.pos)).toBeLessThan(1);
+    run(ship, 3, e, c);
+    expect(Vector3.Dot(ship.axis(Vector3.Up()), up)).toBeGreaterThan(0.995);
   });
 
   it("assisted rotation stops when the stick is released", () => {
@@ -233,8 +225,8 @@ describe("ShipSim", () => {
     c.boost = true;
     run(ship, 1, e, c);
     const v2 = Vector3.Dot(ship.vel, ship.axis(Vector3.Forward()));
-    expect(v1).toBeGreaterThan(25);
-    expect(v2 - v1).toBeGreaterThan(60);
+    expect(v1).toBeGreaterThan(18);
+    expect(v2 - v1).toBeGreaterThan(45);
   });
 
   it("hard impacts damage the hull and report an event", () => {

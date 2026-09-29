@@ -80,7 +80,10 @@ Pausing stops step 1 (the loop's accumulator is reset); tests use
   screen-space-error splitting, horizon culling and progressive refinement
   (children are drawn only when all four are built, so there are no holes).
 - Chunks are 32×32 cells with skirts; normals use a one-cell apron so seams are
-  invisible. Mesh data is built in a **worker pool** (`terrain/workerPool.ts`)
+  invisible. Each vertex also stores its offset to the parent chunk's surface,
+  and the terrain shader **geomorphs** toward it with distance, so LOD switches
+  don't pop while flying. Vegetation shrinks out at the edge of each layer's
+  view radius for the same reason. Mesh data is built in a **worker pool** (`terrain/workerPool.ts`)
   with priorities (near the camera first), pruning of stale requests and
   re-prioritisation as the camera moves.
 
@@ -92,22 +95,33 @@ Pausing stops step 1 (the loop's accumulator is reset); tests use
 - **Planetary pass** (`render/planetaryPass.ts`): a post-process chain *before*
   the HDR pipeline — scene copy → half-res raymarched clouds → full-res
   composite with single-scattering Rayleigh + Mie atmosphere (sky, limbs,
-  aerial perspective) for up to two bodies. The CPU twins
+  aerial perspective) for up to two bodies. Cloud coverage is modulated by a
+  low-frequency *weather* field (clear, broken and overcast regions), denser
+  cores tower higher, and each noise layer drifts in its own direction so
+  clouds build and dissolve (after the Babylon volumetric-clouds playground
+  `#MAONNT`, slowed down); the
+  composite darkens the ground under clouds (cloud shadows) and the cloud
+  pass adds light shafts where sunlight falls through gaps. The CPU twins
   (`render/atmosphereModel.ts`, `render/cloudModel.ts`) drive sunlight colour,
   the in-cloud whiteout veil and tests.
 - **Ocean** (`ocean/`): Gerstner cascades evaluated identically on CPU (buoyancy,
   splash) and GPU; a camera-following patch over a sea shell; depth-aware
   colour, foam, swash and refraction.
 - **Quality tiers** (`H`): ultra / high / balanced / lite scale MSAA, bloom,
-  cloud resolution/steps, refraction and ocean detail.
+  cloud steps, light shafts, cloud shadows, refraction and ocean detail.
+- **Scene depth**: one depth texture (camera-space z) feeds clouds, haze and
+  the ocean. Babylon's depth-renderer shaders are patched to depth-test with a
+  logarithmic depth buffer like the main pass (`patchDepthShaders`), otherwise
+  distant surfaces flicker in it.
 
 ## Flight and on-foot
 
-- `sim/shipSim.ts`: Newtonian rigid body with **flight assist** (on by default,
-  `T`): rotation is a rate command with auto-level near bodies; near a surface
-  the thrusters hold a hover, lateral/vertical input become velocity commands
-  (descent slows close to the ground) and forward stays raw thrust; in space
-  there is no damping so orbits and coasting work. Contacts are
+- `sim/shipSim.ts`: Newtonian rigid body with Outer Wilds style handling:
+  thrusters push along the ship's axes with a short spool-up, gravity always
+  applies and there is no speed cap. Helpers: rotation assist (`T`, the stick
+  sets a turn rate), match velocity (hold `X`: brake to rest and hold
+  against gravity; thrust input then creeps at a capped speed) and landing
+  mode (`L`: rotation keeps the belly toward the ground). Contacts are
   sequential-impulse with friction; the ship floats; resting ships sleep.
 - `sim/character.ts`: capsule controller on the exact height field and static
   colliders, with swimming and slope limits.
@@ -135,7 +149,7 @@ Pausing stops step 1 (the loop's accumulator is reset); tests use
 - **End to end** (`tests/*.spec.ts`, Playwright + headless Chromium with
   SwiftShader): each file boots the game once and drives it through
   `window.__game` (step, place, render, query). They cover boot, pause, input,
-  on-foot, flight (hover, landing, orbit, SOI transfer), frames (spin, day/night,
+  on-foot, flight (hover, landing, landing mode, orbit, SOI transfer), frames (spin, day/night,
   tidal lock, floating origin), terrain LOD/collision, ocean, sky/clouds,
   vegetation and progression/saves.
 - **Screenshot tour** (`npm run test:shots`): renders a fixed list of views into
