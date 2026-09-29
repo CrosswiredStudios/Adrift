@@ -16,6 +16,8 @@ defaults:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # The end-to-end suites render with software WebGL: allow for it.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,3 +32,8 @@ jobs:
       - run: npm run test:unit
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-results
+          path: tech-demo/test-results/

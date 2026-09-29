@@ -6,29 +6,32 @@ Explore ruins → Discover data → Unlock crafting → Upgrade suit and ship �
 
 ## Systems
 
+Status in the tech demo: **[done]** implemented, **[partial]** started,
+unmarked = design only.
+
 ### Exploration
 
-- Points of interest: ruins, crash debris, caves, monoliths.
-- Scanner reveals lore fragments and tech glyphs.
-- Day/night and weather affect visibility and hazard.
+- **[done]** Points of interest: ruins, crash debris, monoliths (caves: design only).
+- **[done]** Scanning reveals lore fragments; discoveries gate recipes.
+- **[partial]** Day/night and clouds are simulated; hazards are not yet.
 
 ### Survival
 
-- Oxygen, power, thermal, health.
+- Oxygen, power, thermal, health (HUD slots exist; not simulated yet).
 - Harvest ice, metals, flora for fuel and repairs.
 - Shelters and beacons extend range.
 
 ### Crafting & Ship Building
 
-- Tiers: Salvage → Field repairs → Skiff (suborbital) → Starhopper (interplanetary).
+- **[partial]** Tiers: Salvage → Field repairs → Skiff (suborbital) → Starhopper (interplanetary). The demo has salvage, a hull-patch field repair and the relay key; the skiff is pre-built and can already reach every body.
 - Ship modules: thruster, tank, nav core, heat shield, beacon amplifier.
 - Discoveries gate recipes, not just resources.
 
 ### Flight
 
-- Arcade Newtonian model: thrust, drag near surface, gravity wells.
-- Flight assist: auto-level, landing guide, collision warning.
-- Seamless scale: floating-origin or camera-relative rendering for orbit transitions.
+- **[done]** Newtonian model with real gravity wells and orbits, atmospheric drag and heating.
+- **[partial]** Flight assist: rate-command rotation, auto-level, hover, gentle-descent landing (collision warning: not yet).
+- **[done]** Seamless scale: floating origin + logarithmic depth, bodies on rails, sphere-of-influence hand-off.
 
 ### Narrative & Discovery
 
@@ -37,6 +40,9 @@ Explore ruins → Discover data → Unlock crafting → Upgrade suit and ship �
 - Endings: rescue signal answered, self-rescue jump, or stay as keeper.
 
 ## Progression Gates
+
+(The demo's objective chain is a compressed version of these; see
+`tech-demo/src/data/content.ts`.)
 
 1. Survive first night.
 2. Restore pod power.
