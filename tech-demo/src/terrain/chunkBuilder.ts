@@ -11,10 +11,20 @@
  * around the grid), so neighbouring chunks, even at different LOD levels,
  * shade seamlessly. Cracks between LOD levels are hidden by skirts: a ring
  * of vertices hanging below each edge.
+ *
+ * Geomorphing: every vertex also carries the offset (and normal change) that
+ * takes it to where the *parent* chunk's surface is, i.e. the midpoint of
+ * its even neighbours along the parent's triangulation. The terrain shader
+ * blends toward that shape as the vertex approaches the distance at which
+ * the parent would take over, so LOD switches don't pop while flying.
  */
 import { faceToDir, nodeBounds, type NodeAddress } from "./cubeSphere";
 import { terrainHeight, type TerrainShape } from "./heightField";
 import { biomeColor, type BiomePalette } from "./biome";
+
+/** Vertex attribute names of the geomorph data (see the terrain material). */
+export const TERRAIN_MORPH_KIND = "terrainMorph";
+export const TERRAIN_MORPH_NORMAL_KIND = "terrainMorphN";
 
 /** Quads per chunk side. */
 export const GRID = 32;
@@ -32,6 +42,12 @@ export interface ChunkData {
   positions: Float32Array;
   normals: Float32Array;
   colors: Float32Array;
+  /** Per vertex: offset to the parent's surface (xyz); w is set by the view (morph distance). */
+  morph: Float32Array;
+  /** Per vertex: normal change toward the parent's normal. */
+  morphNormals: Float32Array;
+  /** Quadtree level of the chunk. */
+  level: number;
   /** Min / max surface radius over the chunk (m from the body centre). */
   minR: number;
   maxR: number;
@@ -174,6 +190,39 @@ export function buildChunk(req: ChunkRequest, ctx: ChunkContext, key: string): C
     }
   }
 
+  // Geomorph targets (level 0 has no parent: all zero).
+  const morph = new Float32Array(CHUNK_VERTS * 4);
+  const morphNormals = new Float32Array(CHUNK_VERTS * 3);
+  if (req.level > 0) {
+    const tmp = [0, 0, 0, 0, 0, 0];
+    const mid = (a: number, b: number): void => {
+      for (let c = 0; c < 3; c++) {
+        tmp[c] = (positions[a * 3 + c] + positions[b * 3 + c]) / 2;
+        tmp[3 + c] = normals[a * 3 + c] + normals[b * 3 + c];
+      }
+      const l = Math.hypot(tmp[3], tmp[4], tmp[5]) || 1;
+      tmp[3] /= l;
+      tmp[4] /= l;
+      tmp[5] /= l;
+    };
+    for (let j = 0; j < V; j++) {
+      for (let i = 0; i < V; i++) {
+        const oddI = i & 1;
+        const oddJ = j & 1;
+        if (!oddI && !oddJ) continue;
+        const at = (ii: number, jj: number): number => jj * V + ii;
+        if (oddI && !oddJ) mid(at(i - 1, j), at(i + 1, j));
+        else if (!oddI && oddJ) mid(at(i, j - 1), at(i, j + 1));
+        else mid(at(i + 1, j - 1), at(i - 1, j + 1)); // the parent quad's diagonal
+        const o = at(i, j);
+        for (let c = 0; c < 3; c++) {
+          morph[o * 4 + c] = tmp[c] - positions[o * 3 + c];
+          morphNormals[o * 3 + c] = tmp[3 + c] - normals[o * 3 + c];
+        }
+      }
+    }
+  }
+
   // Skirts: copy the edge vertex, pulled toward the centre.
   const skirtDepth = Math.max(1.5, size * R * 0.02);
   const edgeIndex = (e: number, k: number): number => {
@@ -204,6 +253,8 @@ export function buildChunk(req: ChunkRequest, ctx: ChunkContext, key: string): C
       normals[dst * 3 + 1] = normals[src * 3 + 1];
       normals[dst * 3 + 2] = normals[src * 3 + 2];
       for (let c = 0; c < 4; c++) colors[dst * 4 + c] = colors[src * 4 + c];
+      for (let c = 0; c < 4; c++) morph[dst * 4 + c] = morph[src * 4 + c];
+      for (let c = 0; c < 3; c++) morphNormals[dst * 3 + c] = morphNormals[src * 3 + c];
     }
   }
 
@@ -220,5 +271,18 @@ export function buildChunk(req: ChunkRequest, ctx: ChunkContext, key: string): C
   }
   boundRadius = Math.sqrt(boundRadius);
 
-  return { key, bodyId: req.bodyId, positions, normals, colors, minR, maxR, center, boundRadius };
+  return {
+    key,
+    bodyId: req.bodyId,
+    positions,
+    normals,
+    colors,
+    morph,
+    morphNormals,
+    level: req.level,
+    minR,
+    maxR,
+    center,
+    boundRadius,
+  };
 }

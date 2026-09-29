@@ -10,8 +10,6 @@ export interface VegetationLook {
   barkColor: string;
   barkNormal: string;
   /** Broadleaf canopy cutouts (dense beech leaves). */
-  canopyColor: string;
-  canopyOpacity: string;
   /** Conifer canopy cutouts (fir needle branches). */
   needleColor: string;
   needleOpacity: string;
@@ -69,8 +67,6 @@ export interface VegetationLook {
 export const defaultVegetationLook: VegetationLook = {
   barkColor: "/textures/vegetation/bark_color.jpg",
   barkNormal: "/textures/vegetation/bark_normal.jpg",
-  canopyColor: "/textures/vegetation/canopy_color.jpg",
-  canopyOpacity: "/textures/vegetation/canopy_opacity.jpg",
   needleColor: "/textures/vegetation/needles_color.jpg",
   needleOpacity: "/textures/vegetation/needles_opacity.jpg",
   plantsColor: "/textures/vegetation/plants_color.jpg",
@@ -98,7 +94,7 @@ export const defaultVegetationLook: VegetationLook = {
   treeHeight: 8.5,
   coniferHeight: 10,
   shrubHeight: 2.2,
-  grassHeight: 0.9,
+  grassHeight: 0.75,
   treeScale: [0.7, 1.35],
   shrubScale: [0.75, 1.5],
   grassScale: [0.7, 1.3],

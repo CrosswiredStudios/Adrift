@@ -201,6 +201,7 @@ export class BodyView {
         coverage: def.clouds.coverage,
         extinction: 0.045,
         windRate: 0.0006,
+        evolve: 2,
       };
     }
   }

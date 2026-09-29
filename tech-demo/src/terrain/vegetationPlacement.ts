@@ -146,7 +146,8 @@ export function placeVegetation(req: VegetationCellRequest, shape: TerrainShape)
       const s = rules.scale[0] + (rules.scale[1] - rules.scale[0]) * r2;
       const baseR = R + h - rules.sink - slope * 1.5;
       const tint = species === "conifer" && rules.coniferTint ? rules.coniferTint : rules.tint;
-      const shade = 0.78 + 0.42 * r3;
+      // Grass varies less: dark tufts read as holes in the lawn.
+      const shade = species === "grass" ? 0.92 + 0.16 * r3 : 0.78 + 0.42 * r3;
       const yaw = r4 * Math.PI * 2;
       buckets[species].push([
         x,

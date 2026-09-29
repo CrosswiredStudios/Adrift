@@ -104,9 +104,10 @@ describe("ShipSim", () => {
     expect(ship.verticalSpeed).toBeLessThan(-12); // g is ~7.4 m/s^2 at 300 m on a 2 km planet
   });
 
-  it("coasts on a stable orbit in space with assist on", () => {
+  it("coasts on a stable orbit with assist off (Newtonian)", () => {
     const e = env();
     const ship = new ShipSim();
+    ship.assist = false;
     const r = R + 1800; // above the hover ceiling: no assist damping
     ship.pos.set(r, 0, 0);
     ship.vel.set(0, 0, Math.sqrt(MU / r));
@@ -126,6 +127,7 @@ describe("ShipSim", () => {
     const w = (2 * Math.PI) / 1200;
     const e = env({ spin: w });
     const ship = new ShipSim();
+    ship.assist = false;
     const r = R + 1800;
     ship.pos.set(r, 0, 0);
     // Inertial circular speed along +z (prograde), minus the frame's w x r.
@@ -141,6 +143,58 @@ describe("ShipSim", () => {
       maxR = Math.max(maxR, d);
     }
     expect((maxR - minR) / r).toBeLessThan(0.01);
+  });
+
+  it("hover: flies like a drone, level, and holds position when released", () => {
+    const e = env({ atmo: 900 });
+    const ship = new ShipSim();
+    ship.placeOnSurface(up, north, e);
+    ship.pos.y += 40;
+    ship.landed = false;
+    const c = emptyControls();
+    c.thrust.z = 1;
+    run(ship, 4, e, c);
+    const fwd = Vector3.Dot(ship.vel, north);
+    expect(fwd).toBeGreaterThan(35); // ~hover.forward
+    expect(Math.abs(ship.verticalSpeed)).toBeLessThan(1);
+    expect(Math.abs(Vector3.Dot(ship.axis(Vector3.Up()), up) - 1)).toBeLessThan(0.02); // level
+    c.thrust.z = 0;
+    run(ship, 3, e, c);
+    expect(ship.vel.length()).toBeLessThan(0.5);
+    // Mouse yaw turns it about the vertical.
+    c.rotate.y = 1;
+    run(ship, 1, e, c);
+    const nose = ship.axis(Vector3.Forward());
+    expect(Vector3.Dot(nose, north)).toBeLessThan(0.6);
+    expect(Math.abs(Vector3.Dot(nose, up))).toBeLessThan(0.05);
+  });
+
+  it("space: the throttle cruises along the nose and the velocity follows turns", () => {
+    const e = env();
+    const ship = new ShipSim();
+    ship.pos.set(0, R + 5000, 0); // well above the hover ceiling
+    const c = emptyControls();
+    c.thrust.z = 1;
+    run(ship, 1, e, c); // throttle -> 0.6
+    c.thrust.z = 0;
+    run(ship, 8, e, c);
+    const speed = ship.vel.length();
+    expect(speed).toBeGreaterThan(250);
+    expect(Vector3.Dot(ship.vel.clone().normalize(), ship.axis(Vector3.Forward()))).toBeGreaterThan(0.99);
+    // Yaw 90 degrees: the velocity swings round with the nose.
+    c.rotate.y = 1;
+    run(ship, Math.PI / 2 / 1.1, e, c);
+    c.rotate.y = 0;
+    run(ship, 9, e, c); // 90 degrees at 300 m/s is ~420 m/s of delta-v at 70 m/s^2
+    expect(Vector3.Dot(ship.vel.clone().normalize(), ship.axis(Vector3.Forward()))).toBeGreaterThan(0.98);
+    expect(Math.abs(ship.vel.length() - ship.throttle * 500)).toBeLessThan(10);
+    // Match velocity: full stop, and nothing drifts afterwards (gravity cancelled).
+    c.matchVelocity = true;
+    run(ship, 8, e, c);
+    c.matchVelocity = false;
+    const p0 = ship.pos.clone();
+    run(ship, 5, e, c);
+    expect(Vector3.Distance(p0, ship.pos)).toBeLessThan(1);
   });
 
   it("assisted rotation stops when the stick is released", () => {

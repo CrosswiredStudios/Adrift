@@ -144,7 +144,7 @@ export const VESPER_DRIFT: BodyDef[] = [
       shallowColor: new Color3(0.12, 0.5, 0.55),
       deepColor: new Color3(0.008, 0.055, 0.115),
     },
-    clouds: { coverage: 0.5, base: 420, thickness: 160 },
+    clouds: { coverage: 0.34, base: 360, thickness: 420 },
     vegetation: true,
     nightLights: false,
   },

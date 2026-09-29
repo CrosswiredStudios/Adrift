@@ -187,6 +187,40 @@ describe("chunk builder", () => {
       expect(left.normals[a]).toBeCloseTo(right.normals[b], 5);
     }
   });
+
+  it("geomorph targets land exactly on the parent chunk's surface", () => {
+    const V = GRID + 1;
+    const parent = buildChunk({ bodyId: "vael", face: 1, level: 3, x: 2, y: 5 }, ctx, "p");
+    // Child (x, y) = (2*2+1, 2*5) covers the parent's u in [GRID/2, GRID], v in [0, GRID/2].
+    const child = buildChunk({ bodyId: "vael", face: 1, level: 4, x: 5, y: 10 }, ctx, "c");
+    const P = (c: typeof parent, i: number, j: number, k: number) => c.positions[(j * V + i) * 3 + k];
+    const target = (i: number, j: number, k: number) =>
+      child.positions[(j * V + i) * 3 + k] + child.morph[(j * V + i) * 4 + k];
+    for (let j = 0; j < V; j++)
+      for (let i = 0; i < V; i++) {
+        const pi = GRID / 2 + i / 2;
+        const pj = j / 2;
+        for (let k = 0; k < 3; k++) {
+          if (i % 2 === 0 && j % 2 === 0) {
+            // Shared vertices: identical, no morph.
+            expect(child.positions[(j * V + i) * 3 + k]).toBeCloseTo(P(parent, pi, pj, k), 3);
+            expect(child.morph[(j * V + i) * 4 + k]).toBe(0);
+          } else if (i % 2 === 1 && j % 2 === 0) {
+            const want = (P(parent, pi - 0.5, pj, k) + P(parent, pi + 0.5, pj, k)) / 2;
+            expect(target(i, j, k)).toBeCloseTo(want, 3);
+          } else if (i % 2 === 0 && j % 2 === 1) {
+            const want = (P(parent, pi, pj - 0.5, k) + P(parent, pi, pj + 0.5, k)) / 2;
+            expect(target(i, j, k)).toBeCloseTo(want, 3);
+          } else {
+            const want = (P(parent, pi + 0.5, pj - 0.5, k) + P(parent, pi - 0.5, pj + 0.5, k)) / 2;
+            expect(target(i, j, k)).toBeCloseTo(want, 3);
+          }
+        }
+      }
+    // Level-0 chunks have nothing to morph to.
+    const root = buildChunk({ bodyId: "vael", face: 0, level: 0, x: 0, y: 0 }, ctx, "r");
+    expect(root.morph.every((v) => v === 0)).toBe(true);
+  });
 });
 
 describe("quadtree LOD", () => {

@@ -56,6 +56,8 @@ export function runJob(job: JobRequest): { result: JobResult; transfer: ArrayBuf
           data.positions.buffer as ArrayBuffer,
           data.normals.buffer as ArrayBuffer,
           data.colors.buffer as ArrayBuffer,
+          data.morph.buffer as ArrayBuffer,
+          data.morphNormals.buffer as ArrayBuffer,
         ],
       };
     }

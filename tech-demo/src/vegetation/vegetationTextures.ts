@@ -14,8 +14,8 @@ import type { VegetationLook } from "./vegetationLook";
 export interface VegetationTextures {
   barkColor: Texture;
   barkNormal: Texture;
-  canopyColor: Texture;
-  canopyOpacity: Texture;
+  /** Procedural broadleaf crown card (colour + alpha in one RGBA map). */
+  canopy: Texture;
   needleColor: Texture;
   needleOpacity: Texture;
   plantsColor: Texture;
@@ -111,26 +111,7 @@ export function loadVegetationTextures(scene: Scene, name: string, look: Vegetat
       out.barkNormal = t;
     },
   );
-  out.canopyColor = loadOne(
-    scene,
-    `${name}-veg-canopy`,
-    look.canopyColor,
-    fallbacks,
-    green(0.36, 0.52, 0.24, 17),
-    (t) => {
-      out.canopyColor = t;
-    },
-  );
-  out.canopyOpacity = loadOne(
-    scene,
-    `${name}-veg-canopy-o`,
-    look.canopyOpacity,
-    fallbacks,
-    opacityFb(19),
-    (t) => {
-      out.canopyOpacity = asOpacity(t);
-    },
-  );
+  out.canopy = makeLeafClump(scene, `${name}-veg-canopy`, 29);
   out.needleColor = loadOne(
     scene,
     `${name}-veg-needle`,
@@ -172,7 +153,6 @@ export function loadVegetationTextures(scene: Scene, name: string, look: Vegetat
     },
   );
   out.grass = makeGrassTuft(scene, `${name}-veg-grass`, 11);
-  asOpacity(out.canopyOpacity);
   asOpacity(out.needleOpacity);
   asOpacity(out.plantsOpacity);
   return out;
@@ -249,12 +229,12 @@ export function makeGrassTuft(scene: Scene, name: string, seed: number): Texture
   ctx.translate(0, H);
   ctx.scale(1, -1);
   const rng = mulberry32(seed);
-  const blades = 46;
+  const blades = 70;
   for (let i = 0; i < blades; i++) {
     const x0 = W * (0.08 + 0.84 * rng());
     const h = H * (0.45 + 0.53 * rng());
     const lean = (rng() - 0.5) * W * 0.35;
-    const w = 3 + rng() * 5;
+    const w = 2 + rng() * 4;
     const tipX = x0 + lean;
     const tipY = H - h;
     const ctrlX = x0 + lean * 0.25;
@@ -262,12 +242,12 @@ export function makeGrassTuft(scene: Scene, name: string, seed: number): Texture
     const light = 0.75 + 0.5 * rng();
     const grad = ctx.createLinearGradient(0, H, 0, tipY);
     const base = (k: number, a = 1): string =>
-      `rgba(${Math.round(52 * k * light)}, ${Math.round(88 * k * light)}, ${Math.round(30 * k * light)}, ${a})`;
-    grad.addColorStop(0, base(0.45));
-    grad.addColorStop(0.35, base(0.9));
+      `rgba(${Math.round(72 * k * light)}, ${Math.round(112 * k * light)}, ${Math.round(40 * k * light)}, ${a})`;
+    grad.addColorStop(0, base(0.7));
+    grad.addColorStop(0.35, base(1.0));
     grad.addColorStop(
       1,
-      `rgba(${Math.round(150 * light)}, ${Math.round(160 * light)}, ${Math.round(70 * light)}, 1)`,
+      `rgba(${Math.round(165 * light)}, ${Math.round(178 * light)}, ${Math.round(88 * light)}, 1)`,
     );
     ctx.fillStyle = grad;
     ctx.beginPath();
@@ -275,6 +255,68 @@ export function makeGrassTuft(scene: Scene, name: string, seed: number): Texture
     ctx.quadraticCurveTo(ctrlX - w * 0.6, ctrlY, tipX, tipY);
     ctx.quadraticCurveTo(ctrlX + w * 0.6, ctrlY, x0 + w, H);
     ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+  tex.update(false);
+  tex.wrapU = Texture.CLAMP_ADDRESSMODE;
+  tex.wrapV = Texture.CLAMP_ADDRESSMODE;
+  return tex;
+}
+
+/**
+ * Broadleaf crown card: a few hundred small leaves packed into a lobed
+ * crown silhouette, darker low and inside (self-shadowing), lighter on top.
+ * (The CC0 leaf set is an atlas of nine single leaves; mapped onto a whole
+ * card it read as a lollipop of giant leaves.)
+ */
+export function makeLeafClump(scene: Scene, name: string, seed: number): Texture {
+  const S = 512;
+  const tex = new DynamicTexture(name, { width: S, height: S }, scene, true, Texture.TRILINEAR_SAMPLINGMODE);
+  tex.hasAlpha = true;
+  const ctx = tex.getContext() as CanvasRenderingContext2D;
+  ctx.clearRect(0, 0, S, S);
+  ctx.save();
+  // Same flip as the grass tuft: canvas rows reach the card bottom-up.
+  ctx.translate(0, S);
+  ctx.scale(1, -1);
+  const rng = mulberry32(seed);
+  const s1 = rng() * 6.28;
+  const s2 = rng() * 6.28;
+  const crown = (a: number): number =>
+    S * 0.44 * (0.84 + 0.1 * Math.sin(3 * a + s1) + 0.06 * Math.sin(7 * a + s2));
+  interface Leaf {
+    x: number;
+    y: number;
+    len: number;
+    rot: number;
+    light: number;
+    hue: number;
+  }
+  const leaves: Leaf[] = [];
+  for (let i = 0; i < 460; i++) {
+    const a = rng() * Math.PI * 2;
+    const r = Math.sqrt(rng()) * crown(a);
+    const x = S * 0.5 + Math.cos(a) * r;
+    const y = S * 0.53 + Math.sin(a) * r * 0.92;
+    // 0 at the bottom of the crown, 1 at the top (canvas y is up here).
+    const up = Math.min(1, Math.max(0, (y - S * 0.1) / (S * 0.85)));
+    const rim = r / crown(a);
+    leaves.push({
+      x,
+      y,
+      len: 13 + rng() * 12,
+      rot: rng() * Math.PI,
+      light: 0.45 + 0.35 * up + 0.2 * rim + (rng() - 0.5) * 0.25,
+      hue: 88 + rng() * 26,
+    });
+  }
+  leaves.sort((p, q) => p.light - q.light); // dark (inner/lower) leaves behind
+  for (const l of leaves) {
+    const L = Math.round(Math.max(10, Math.min(52, 16 + 26 * l.light)));
+    ctx.fillStyle = `hsl(${l.hue.toFixed(0)}, ${(38 + 20 * (1 - l.light)).toFixed(0)}%, ${L}%)`;
+    ctx.beginPath();
+    ctx.ellipse(l.x, l.y, l.len * 0.5, l.len * 0.28, l.rot, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.restore();

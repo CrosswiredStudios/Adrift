@@ -632,6 +632,7 @@ export class Game {
         sunColor: new Color3(T[0], T[1], T[2]).scale(SUN_INTENSITY),
         ambient: light.ambient.scale(0.25 + light.skyBrightness * 0.9),
         time: tR,
+        hazeScale: focusView.atmo?.hM ?? 150,
       };
     }
     this.planetary.update({
@@ -732,6 +733,8 @@ export class Game {
         verticalSpeed: ship.verticalSpeed,
         orbitalSpeed: vI.length(),
         assist: ship.assist,
+        hover: ship.hoverFactor,
+        throttle: ship.throttle,
         heat: ship.heat,
         hull: ship.hull,
         landed: ship.landed,

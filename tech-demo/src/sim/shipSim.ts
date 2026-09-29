@@ -8,19 +8,20 @@
  * hull/landing gear collide with the exact terrain height field and float
  * on the ocean.
  *
- * Flight assist (on by default, toggled with T) makes this approachable
- * without taking the physics away:
- *  - rotation: stick = angular *rate* command, released = rotation stops;
- *    near a body, roll auto-levels to the local horizon;
- *  - near a surface (inside the atmosphere, or below the hover ceiling on
- *    airless bodies): thrusters cancel gravity and bleed off drift on any
- *    axis you aren't commanding, so the ship hovers like a drone. Lateral
- *    and vertical input become *velocity* commands (the vertical one limited
- *    close to the ground, so holding "down" lands gently); forward input
- *    stays raw thrust so the ship can build real speed;
- *  - in space: no damping at all, so coasting and orbits work.
- * With assist off every input is a raw force/torque. "Match velocity" (X)
- * brakes to rest relative to the surface frame in either mode.
+ * Flight assist (on by default, toggled with T) gives two arcade handling
+ * regimes, blended over `regimeBand` metres below the atmosphere top (or the
+ * hover ceiling on airless bodies):
+ *  - hover (near a surface) - a drone: the ship stays level, W/S/A/D move
+ *    it across the ground, Space/C climb and descend (descent slows close
+ *    to the ground), the mouse turns it and tilts the nose a little, and
+ *    letting go holds position. Gravity is cancelled; it banks into turns;
+ *  - space - a fighter: W/S set a throttle (a cruise speed along the nose,
+ *    Shift boosts), the ship's velocity swings round to follow the nose,
+ *    strafing adds sideways speed, X brakes to a stop. Rotation is a rate
+ *    command held in the non-rotating frame. Gravity is cancelled too, so
+ *    nothing drifts.
+ * With assist off every input is a raw force/torque and the full Newtonian
+ * model applies (coasting, orbits, gravity).
  *
  * Axis conventions (ship local): +X right, +Y up, +Z forward (nose).
  * Positive rotation follows the right-hand rule, so nose-up is a negative
@@ -29,6 +30,11 @@
 import { Quaternion, Vector3 } from "@babylonjs/core";
 import { bodyFrameAcceleration } from "./frames";
 import { clamp } from "../common/math";
+
+const smooth01 = (x: number): number => {
+  const t = clamp(x, 0, 1);
+  return t * t * (3 - 2 * t);
+};
 
 export interface ShipSpec {
   /** Thruster accelerations (m/s^2). */
@@ -51,8 +57,40 @@ export interface ShipSpec {
   safeImpact: number;
   /** Assist hover ceiling above the surface on airless bodies (m). */
   hoverCeiling: number;
-  /** Assist velocity commands at full stick near a surface (m/s). */
-  assistSpeed: { lateral: number; up: number; down: number };
+  /** Height of the hover <-> space blend below the atmosphere top / hover ceiling (m). */
+  regimeBand: number;
+  /** Assisted hover (drone) handling: speeds at full stick (m/s), response. */
+  hover: {
+    forward: number;
+    lateral: number;
+    up: number;
+    down: number;
+    /** Forward speed multiplier while boosting. */
+    boost: number;
+    /** Max thrust acceleration (m/s^2). */
+    accel: number;
+    /** Velocity response time (s). */
+    tau: number;
+    /** Yaw rate at full stick (rad/s). */
+    turnRate: number;
+    /** Nose pitch at full stick (rad). */
+    pitchLimit: number;
+    /** Bank angle at full strafe (rad). */
+    bank: number;
+    /** Attitude correction rate (1/s). */
+    attitudeGain: number;
+  };
+  /** Assisted space (fighter) handling. */
+  space: {
+    /** Speed at full throttle (m/s). */
+    maxSpeed: number;
+    boost: number;
+    /** Strafe speed (m/s). */
+    lateral: number;
+    accel: number;
+    boostAccel: number;
+    tau: number;
+  };
   /** Below this height (ship origin above ground, m) an idle assisted hover settles onto the gear. */
   touchdownHeight: number;
 }
@@ -75,7 +113,21 @@ export const SKIFF: ShipSpec = {
   ],
   safeImpact: 9,
   hoverCeiling: 1500,
-  assistSpeed: { lateral: 25, up: 30, down: 20 },
+  regimeBand: 250,
+  hover: {
+    forward: 42,
+    lateral: 24,
+    up: 30,
+    down: 20,
+    boost: 2.2,
+    accel: 34,
+    tau: 0.45,
+    turnRate: 1.5,
+    pitchLimit: 0.45,
+    bank: 0.3,
+    attitudeGain: 4,
+  },
+  space: { maxSpeed: 500, boost: 3.5, lateral: 60, accel: 70, boostAccel: 220, tau: 1.0 },
   touchdownHeight: 2.4,
 };
 
@@ -148,6 +200,10 @@ export class ShipSim {
   altitude = 0;
   /** Velocity component along the local up (m/s). */
   verticalSpeed = 0;
+  /** 1 = hover (drone) handling, 0 = space (fighter) handling. */
+  hoverFactor = 1;
+  /** Space throttle, -0.25..1 of max speed (kept in sync while hovering). */
+  throttle = 0;
   /** Thruster output this step (ship axes, fraction of max) for FX. */
   readonly thrustOut = new Vector3();
 
@@ -233,53 +289,100 @@ export class ShipSim {
     // --- Environment acceleration (gravity + frame pseudo-forces).
     const g = bodyFrameAcceleration(env.mu, env.spinRate, this.pos, this.vel, t.g);
 
-    // --- Thrusters (ship frame).
     Quaternion.InverseToRef(this.att, t.qi);
-    const gLocal = g.applyRotationQuaternionToRef(t.qi, new Vector3());
-    const vLocal = this.vel.applyRotationQuaternionToRef(t.qi, new Vector3());
-    const nearSurface =
-      env.atmosphereTop !== null ? r - env.radius < env.atmosphereTop : this.altitude < s.hoverCeiling;
-    const aLocal = t.local.set(0, 0, 0);
-    const maxPos = [s.thrust.lateral, s.thrust.up, s.thrust.forward * (c.boost ? s.boost : 1)];
-    const maxNeg = [s.thrust.lateral, s.thrust.down, s.thrust.back];
-    const input = [c.thrust.x, c.thrust.y, c.thrust.z];
-    const gl = [gLocal.x, gLocal.y, gLocal.z];
-    const vl = [vLocal.x, vLocal.y, vLocal.z];
-    const out = [0, 0, 0];
-    for (let k = 0; k < 3; k++) {
-      const u = input[k];
-      let a = 0;
-      const hovering = this.assist && nearSurface && !this.restingOnGround();
-      if (Math.abs(u) > 0.05 && hovering && k < 2) {
-        // Velocity command; descent slows near the ground (~0.6 m/s per m).
-        let vCmd =
-          k === 0 ? u * s.assistSpeed.lateral : u > 0 ? u * s.assistSpeed.up : u * s.assistSpeed.down;
-        if (k === 1 && vCmd < 0) vCmd = Math.max(vCmd, -Math.max(2.5, this.altitude * 0.6));
-        a = (vCmd - vl[k]) / 0.6 - gl[k];
-      } else if (Math.abs(u) > 0.05) {
-        a = u > 0 ? u * maxPos[k] : u * maxNeg[k];
-        if (hovering) a -= gl[k];
-      } else if (c.matchVelocity) {
-        a = -vl[k] / 0.35 - gl[k];
-      } else if (hovering) {
-        // Hover + drift damping (drone feel). Just above the ground with no
-        // vertical input, let it settle onto the gear instead of hovering on
-        // a contact bounce.
-        a = -gl[k] - vl[k] / 0.8;
-        if (this.altitude < s.touchdownHeight && Math.abs(input[1]) <= 0.05) {
-          const upLocal = up.applyRotationQuaternionToRef(t.qi, new Vector3());
-          const upK = k === 0 ? upLocal.x : k === 1 ? upLocal.y : upLocal.z;
-          a -= upK * 1.5; // ~1.5 m/s^2 net sink along the local vertical
-        }
+    const nose = this.axis(Vector3.Forward(), t.fwd);
+    const shipUp = this.axis(Vector3.Up(), new Vector3());
+    const shipRight = this.axis(Vector3.Right(), t.right);
+
+    // --- Flight regime: 1 = hover (low over a surface), 0 = space, blended
+    // over `regimeBand` metres below the atmosphere top / hover ceiling.
+    const top = env.atmosphereTop ?? s.hoverCeiling;
+    const height = env.atmosphereTop !== null ? r - env.radius : this.altitude;
+    const hover = smooth01((top - height) / s.regimeBand);
+    this.hoverFactor = hover;
+
+    // Local horizontal frame for the hover controller.
+    const fwdH = nose.subtract(up.scale(Vector3.Dot(nose, up)));
+    if (fwdH.lengthSquared() < 0.04)
+      fwdH.copyFrom(shipUp.subtract(up.scale(Vector3.Dot(shipUp, up))).scaleInPlace(-1));
+    fwdH.normalize();
+    const rightH = Vector3.Cross(up, fwdH).normalize();
+
+    // Frame spin (body axes) for inertial ("space") velocities and attitude.
+    const spin = env.spinRate;
+    const aThrust = t.a.setAll(0);
+    const boostK = c.boost ? 1 : 0;
+    let maxA: number;
+    const input = c.thrust;
+    const dead = (u: number): number => (Math.abs(u) > 0.05 ? u : 0);
+    if (!this.assist) {
+      // Raw thrusters.
+      const lim = (u: number, pos: number, neg: number): number => (u >= 0 ? u * pos : u * neg);
+      const aL = new Vector3(
+        lim(dead(input.x), s.thrust.lateral, s.thrust.lateral),
+        lim(dead(input.y), s.thrust.up, s.thrust.down),
+        lim(dead(input.z), s.thrust.forward * (c.boost ? s.boost : 1), s.thrust.back),
+      );
+      aL.applyRotationQuaternionToRef(this.att, aThrust);
+      maxA = Math.max(s.thrust.forward * (c.boost ? s.boost : 1), s.thrust.up);
+    } else {
+      // Hover (drone): velocity command in the local horizontal frame,
+      // relative to the ground; gravity is cancelled, releasing = hold.
+      const hv = s.hover;
+      let vUp = 0;
+      const uy = dead(input.y);
+      if (uy > 0) vUp = uy * hv.up;
+      else if (uy < 0) vUp = Math.max(uy * hv.down, -Math.max(2.5, this.altitude * 0.6));
+      else if (this.altitude < s.touchdownHeight) vUp = -1.2; // settle onto the gear
+      const vHover = rightH
+        .scale(dead(input.x) * hv.lateral)
+        .addInPlace(fwdH.scale(dead(input.z) * hv.forward * (1 + (hv.boost - 1) * boostK)))
+        .addInPlace(up.scale(vUp));
+      const aHover = vHover
+        .subtractInPlace(this.vel)
+        .scaleInPlace(1 / hv.tau)
+        .subtractInPlace(g);
+
+      // Space (fighter): the throttle sets a speed along the nose, strafing
+      // adds sideways speed; velocities are relative to the body's
+      // non-rotating frame and only gravity is cancelled.
+      const sp = s.space;
+      if (hover > 0.5) {
+        this.throttle = clamp(Vector3.Dot(this.vel, nose) / sp.maxSpeed, -0.25, 1);
+      } else {
+        this.throttle = clamp(this.throttle + dead(input.z) * dt * 0.6, -0.25, 1);
+        if (c.matchVelocity) this.throttle = 0;
       }
-      a = clamp(a, -maxNeg[k], maxPos[k]);
-      out[k] = a >= 0 ? a / maxPos[k] : a / -maxNeg[k];
-      if (k === 0) aLocal.x = a;
-      else if (k === 1) aLocal.y = a;
-      else aLocal.z = a;
+      const vI = new Vector3(this.vel.x + spin * this.pos.z, this.vel.y, this.vel.z - spin * this.pos.x);
+      const vSpace = nose
+        .scale(this.throttle * sp.maxSpeed * (1 + (sp.boost - 1) * boostK))
+        .addInPlace(shipRight.scale(dead(input.x) * sp.lateral))
+        .addInPlace(shipUp.scale(dead(input.y) * sp.lateral));
+      const d2 = r * r;
+      const gGrav = this.pos.scale(-env.mu / (d2 * r));
+      const aSpace = vSpace
+        .subtractInPlace(vI)
+        .scaleInPlace(1 / (c.matchVelocity ? 0.5 : sp.tau))
+        .subtractInPlace(gGrav);
+
+      aThrust.copyFrom(aHover.scaleInPlace(hover).addInPlace(aSpace.scaleInPlace(1 - hover)));
+      if (c.matchVelocity && hover > 0) {
+        // Brake to rest relative to the ground.
+        const brake = this.vel.scale(-1 / 0.35).subtractInPlace(g);
+        aThrust.scaleInPlace(1 - hover).addInPlace(brake.scaleInPlace(hover));
+      }
+      // Resting on the gear: stay put unless climbing away.
+      if (this.restingOnGround() && uy <= 0) aThrust.setAll(0);
+      maxA = hv.accel * hover + (sp.accel + (sp.boostAccel - sp.accel) * boostK) * (1 - hover);
     }
-    this.thrustOut.set(out[0], out[1], out[2]);
-    const aThrust = aLocal.applyRotationQuaternionToRef(this.att, t.a);
+    const aMag = aThrust.length();
+    if (aMag > maxA) aThrust.scaleInPlace(maxA / aMag);
+    const aLocalOut = aThrust.applyRotationQuaternionToRef(t.qi, t.local);
+    this.thrustOut.set(
+      clamp(aLocalOut.x / maxA, -1, 1),
+      clamp(aLocalOut.y / maxA, -1, 1),
+      clamp(aLocalOut.z / maxA, -1, 1),
+    );
 
     // --- Aerodynamic drag (the atmosphere co-rotates with the body frame).
     const speed = this.vel.length();
@@ -295,18 +398,41 @@ export class ShipSim {
     const rate = this.angVel;
     const cmd = new Vector3(-c.rotate.x, c.rotate.y, -c.rotate.z);
     if (this.assist) {
-      const target = new Vector3(cmd.x * s.maxRate.x, cmd.y * s.maxRate.y, cmd.z * s.maxRate.z);
-      // Auto-level roll to the local horizon near bodies (not while rolling or nose-vertical).
-      const nose = this.axis(Vector3.Forward(), t.fwd);
-      if (nearSurface && Math.abs(c.rotate.z) < 0.05 && Math.abs(Vector3.Dot(nose, up)) < 0.9) {
-        // Bank into turns a little, like an aircraft.
-        const want = -c.rotate.y * 0.45;
-        target.z = clamp((this.bankAngle() - want) * 2.2, -s.maxRate.z, s.maxRate.z);
+      // Space: rate command, holding attitude in the non-rotating frame.
+      const spinLocal = new Vector3(0, spin, 0).applyRotationQuaternionToRef(t.qi, new Vector3());
+      const wSpace = new Vector3(
+        cmd.x * s.maxRate.x,
+        cmd.y * s.maxRate.y,
+        cmd.z * s.maxRate.z,
+      ).subtractInPlace(spinLocal);
+      // Hover: stay level; the stick pitches the nose a little, yaw turns,
+      // the ship banks into turns and strafes.
+      let wHover = Vector3.Zero();
+      if (hover > 0) {
+        const hv = s.hover;
+        const pitchT = clamp(c.rotate.x, -1, 1) * hv.pitchLimit;
+        const bankT = clamp(dead(input.x) * hv.bank + c.rotate.y * hv.bank * 0.8, -0.6, 0.6);
+        const fwdT = fwdH.scale(Math.cos(pitchT)).addInPlace(up.scale(Math.sin(pitchT)));
+        const up0 = Vector3.Cross(fwdT, rightH);
+        const rightT = rightH.scale(Math.cos(bankT)).subtractInPlace(up0.scale(Math.sin(bankT)));
+        const upT = up0.scale(Math.cos(bankT)).addInPlace(rightH.scale(Math.sin(bankT)));
+        const qT = quatFromAxes(rightT, upT, fwdT, new Quaternion());
+        // Error rotation in ship axes: att * e = qT.
+        const e = t.qi.multiply(qT);
+        if (e.w < 0) e.scaleInPlace(-1);
+        const half = Math.acos(clamp(e.w, -1, 1));
+        const sinHalf = Math.sin(half);
+        if (sinHalf > 1e-6)
+          wHover = new Vector3(e.x, e.y, e.z).scaleInPlace((2 * half * hv.attitudeGain) / sinHalf);
+        const upLocal = up.applyRotationQuaternionToRef(t.qi, new Vector3());
+        wHover.addInPlace(upLocal.scaleInPlace(c.rotate.y * hv.turnRate));
       }
+      const target = wHover.scaleInPlace(hover).addInPlace(wSpace.scaleInPlace(1 - hover));
       const k = 6;
-      rate.x += clamp((target.x - rate.x) * k, -s.angAccel.x, s.angAccel.x) * dt;
-      rate.y += clamp((target.y - rate.y) * k, -s.angAccel.y, s.angAccel.y) * dt;
-      rate.z += clamp((target.z - rate.z) * k, -s.angAccel.z, s.angAccel.z) * dt;
+      const acc = s.angAccel.scale(1 + hover); // hovering is snappier
+      rate.x += clamp((target.x - rate.x) * k, -acc.x, acc.x) * dt;
+      rate.y += clamp((target.y - rate.y) * k, -acc.y, acc.y) * dt;
+      rate.z += clamp((target.z - rate.z) * k, -acc.z, acc.z) * dt;
     } else {
       rate.x += cmd.x * s.angAccel.x * dt;
       rate.y += cmd.y * s.angAccel.y * dt;

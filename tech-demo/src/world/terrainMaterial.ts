@@ -21,6 +21,7 @@
 import { Color3, Material, MaterialPluginBase, Scene, Texture, UniformBuffer } from "@babylonjs/core";
 import { glslNum } from "../common/shaderChunks";
 import { PluginRegistry } from "../common/materialPlugin";
+import { TERRAIN_MORPH_KIND, TERRAIN_MORPH_NORMAL_KIND } from "../terrain/chunkBuilder";
 import {
   configureTiledTexture,
   loadWithFallback,
@@ -143,6 +144,10 @@ class TerrainPlugin extends MaterialPluginBase {
     return "TerrainTextures";
   }
 
+  public override getAttributes(attributes: string[]): void {
+    attributes.push(TERRAIN_MORPH_KIND, TERRAIN_MORPH_NORMAL_KIND);
+  }
+
   public override getSamplers(samplers: string[]): void {
     samplers.push("uTerrainBase", "uTerrainRock", "uTerrainBaseN", "uTerrainRockN");
   }
@@ -174,14 +179,27 @@ class TerrainPlugin extends MaterialPluginBase {
     if (shaderType === "vertex") {
       return {
         CUSTOM_VERTEX_DEFINITIONS: `
+          attribute vec4 ${TERRAIN_MORPH_KIND};
+          attribute vec3 ${TERRAIN_MORPH_NORMAL_KIND};
           varying vec3 vTerrainLocal;
           varying vec3 vTerrainNormalL;
           varying vec3 vTerrainAxisX;
           varying vec3 vTerrainAxisY;
           varying vec3 vTerrainAxisZ;`,
+        // Geomorph toward the parent chunk's surface with distance (the
+        // camera is always at the render origin).
+        CUSTOM_VERTEX_UPDATE_POSITION: `
+          float tMorphK = 0.0;
+          if (${TERRAIN_MORPH_KIND}.w > 0.0) {
+            float tMorphD = length((world * vec4(positionUpdated, 1.0)).xyz);
+            tMorphK = smoothstep(0.55 * ${TERRAIN_MORPH_KIND}.w, 0.9 * ${TERRAIN_MORPH_KIND}.w, tMorphD);
+          }
+          positionUpdated += ${TERRAIN_MORPH_KIND}.xyz * tMorphK;`,
+        CUSTOM_VERTEX_UPDATE_NORMAL: `
+          normalUpdated = normalize(normalUpdated + ${TERRAIN_MORPH_NORMAL_KIND} * tMorphK);`,
         CUSTOM_VERTEX_MAIN_END: `
-          vTerrainLocal = position;
-          vTerrainNormalL = normalize(normal);
+          vTerrainLocal = positionUpdated;
+          vTerrainNormalL = normalize(normalUpdated);
           // Body -> world rotation (chunks are unscaled children of the body root).
           vTerrainAxisX = normalize(mat3(finalWorld) * vec3(1.0, 0.0, 0.0));
           vTerrainAxisY = normalize(mat3(finalWorld) * vec3(0.0, 1.0, 0.0));

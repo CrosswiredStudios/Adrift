@@ -99,9 +99,9 @@ export const VAEL_VEGETATION: VegetationConfig = {
   },
   grass: {
     cellSize: 50,
-    radius: 130,
+    radius: 110,
     rules: {
-      density: 26000,
+      density: 70000,
       line: 0.85,
       shore: 1.2,
       slope: 0.3,
@@ -112,7 +112,7 @@ export const VAEL_VEGETATION: VegetationConfig = {
       clumpFloor: 0.3,
       scale: [0.7, 1.6],
       sink: 0.08,
-      tint: [0.95, 1.05, 0.7],
+      tint: [0.95, 1.05, 0.85],
     },
   },
 };
@@ -203,15 +203,16 @@ export class VegetationView {
       });
       return m;
     };
-    // Grass: one procedural RGBA tuft map, depth-ready from the start.
-    const grassMaterial = (): PBRMaterial => {
-      const m = new PBRMaterial(`${bodyId}-veg-grass`, scene);
-      m.albedoTexture = t.grass;
+    // Procedural RGBA cards (grass tufts, broadleaf crowns): depth-ready from the start.
+    const rgbaFoliage = (label: string, tex: typeof t.grass, twoSided = true, gain = 1): PBRMaterial => {
+      const m = new PBRMaterial(`${bodyId}-veg-${label}`, scene);
+      m.albedoTexture = tex;
+      m.albedoColor = new Color3(gain, gain, gain); // up-lit tufts match the ground brightness
       m.useAlphaFromAlbedoTexture = true;
       m.transparencyMode = Material.MATERIAL_ALPHATEST;
       m.alphaCutOff = 0.5;
       m.backFaceCulling = false;
-      m.twoSidedLighting = true;
+      m.twoSidedLighting = twoSided;
       m.metallic = 0;
       m.roughness = 0.85;
       m.subSurface.isTranslucencyEnabled = true;
@@ -222,16 +223,28 @@ export class VegetationView {
     };
     const mats: Record<SpeciesGeometry["material"], PBRMaterial> = {
       bark,
-      canopy: foliage("canopy", t.canopyColor, t.canopyOpacity),
+      canopy: rgbaFoliage("canopy", t.canopy),
       needles: foliage("needles", t.needleColor, t.needleOpacity),
       plants: foliage("plants", t.plantsColor, t.plantsOpacity),
-      grass: grassMaterial(),
+      grass: rgbaFoliage("grass", t.grass, false, 1.7),
     };
-    if (look.sway) {
-      for (const m of [mats.canopy, mats.needles, mats.plants, mats.grass]) {
-        this.sway.push(attachSway(m, { amp: look.swayAmp, freq: look.swayFreq }));
-      }
-    }
+    // Grass and shrub cards carry up-facing normals (see bendNormalsUp): both
+    // faces must use them as-is, not flipped for the back face.
+    mats.plants.twoSidedLighting = false;
+    // Sway (if enabled) and a distance fade that shrinks plants to nothing
+    // as they reach the edge of their layer's view radius, so cells
+    // streaming in and out don't pop.
+    const amp = look.sway ? look.swayAmp : 0;
+    const freq = look.sway ? look.swayFreq : 0;
+    const fades: [PBRMaterial, number][] = [
+      [mats.bark, config.trees.radius],
+      [mats.canopy, config.trees.radius],
+      [mats.needles, config.trees.radius],
+      [mats.plants, config.shrubs.radius],
+      [mats.grass, config.grass.radius],
+    ];
+    for (const [m, fadeFar] of fades) this.sway.push(attachSway(m, { amp, freq, fadeFar }));
+
     const add = (species: VegetationSpecies, geos: SpeciesGeometry[]): void => {
       for (const g of geos) {
         const mesh = this.makeMesh(`${bodyId}-veg-${g.meshName}`, g.geo);
@@ -400,9 +413,7 @@ export class VegetationView {
       instances,
       tris,
       pending: this.pending.size,
-      ready: [t.barkColor, t.canopyColor, t.canopyOpacity, t.needleColor, t.plantsColor, t.grass].every((x) =>
-        x.isReady(),
-      ),
+      ready: [t.barkColor, t.canopy, t.needleColor, t.plantsColor, t.grass].every((x) => x.isReady()),
       fallbacks: [...t.fallbacks],
       depthMaterials: this.depthReady.size,
     };

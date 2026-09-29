@@ -9,8 +9,8 @@
  */
 import { Material, Mesh, Scene, TransformNode, VertexBuffer } from "@babylonjs/core";
 import { selectLeaves, resolveDrawSet, roots, type ChunkBoundsInfo, type LodParams } from "./quadtree";
-import { chunkIndices, type ChunkData } from "./chunkBuilder";
-import { nodeKey, levelForSpacing } from "./cubeSphere";
+import { chunkIndices, TERRAIN_MORPH_KIND, TERRAIN_MORPH_NORMAL_KIND, type ChunkData } from "./chunkBuilder";
+import { nodeKey, levelForSpacing, nodeArcLength } from "./cubeSphere";
 import { GRID } from "./chunkBuilder";
 import { CancelledError, type TerrainWorkerPool } from "./workerPool";
 import { runJob } from "./terrainJobs";
@@ -169,6 +169,13 @@ export class TerrainView {
     mesh.setVerticesData(VertexBuffer.PositionKind, data.positions, false, 3);
     mesh.setVerticesData(VertexBuffer.NormalKind, data.normals, false, 3);
     mesh.setVerticesData(VertexBuffer.ColorKind, data.colors, false, 4);
+    // Geomorph range: the distance at which the parent chunk takes over.
+    if (data.level > 0) {
+      const w = this.params.splitFactor * nodeArcLength(data.level - 1, this.o.shape.radius);
+      for (let i = 3; i < data.morph.length; i += 4) data.morph[i] = w;
+    }
+    mesh.setVerticesData(TERRAIN_MORPH_KIND, data.morph, false, 4);
+    mesh.setVerticesData(TERRAIN_MORPH_NORMAL_KIND, data.morphNormals, false, 3);
     mesh.setIndices(chunkIndices());
     mesh.material = this.o.material;
     mesh.parent = this.o.root;

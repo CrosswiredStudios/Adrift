@@ -64,6 +64,8 @@ export interface CloudFrame {
   /** Ambient sky light on the clouds (HDR). */
   ambient: Color3;
   time: number;
+  /** Haze (Mie) scale height of the atmosphere (m), for light shafts. */
+  hazeScale: number;
 }
 
 export interface PlanetaryFrame {
@@ -78,12 +80,75 @@ export interface PlanetaryFrame {
 
 export type SkyQuality = "ultra" | "high" | "balanced" | "lite";
 
-const QUALITY: Record<SkyQuality, { cloudSteps: number; lightSteps: number; atmoSteps: number }> = {
-  ultra: { cloudSteps: 64, lightSteps: 6, atmoSteps: 16 },
-  high: { cloudSteps: 48, lightSteps: 5, atmoSteps: 14 },
-  balanced: { cloudSteps: 28, lightSteps: 4, atmoSteps: 10 },
-  lite: { cloudSteps: 0, lightSteps: 0, atmoSteps: 8 },
+const QUALITY: Record<
+  SkyQuality,
+  { cloudSteps: number; lightSteps: number; atmoSteps: number; shafts: boolean; shadows: boolean }
+> = {
+  ultra: { cloudSteps: 64, lightSteps: 6, atmoSteps: 16, shafts: true, shadows: true },
+  high: { cloudSteps: 48, lightSteps: 5, atmoSteps: 14, shafts: true, shadows: true },
+  balanced: { cloudSteps: 28, lightSteps: 4, atmoSteps: 10, shafts: false, shadows: true },
+  lite: { cloudSteps: 0, lightSteps: 0, atmoSteps: 8, shafts: false, shadows: false },
 };
+
+/** Share of ground lighting that is direct sun (what a cloud shadow removes). */
+const SHADOW_AMOUNT = 0.72;
+/** Light shafts: strength, and the sun-visibility level that reads as "neutral". */
+const SHAFT_STRENGTH = 0.005;
+const SHAFT_BIAS = 0.65;
+
+const CLOUD_DECK_UNIFORMS = [
+  "uBodyCenter",
+  "uWorldToBody",
+  "uPlanetRadius",
+  "uCloudBase",
+  "uCloudThickness",
+  "uCoverage",
+  "uExtinction",
+  "uWindRate",
+  "uEvolve",
+  "uTime",
+  "uSunLocal",
+];
+
+/** Cloud-deck uniforms shared by the cloud raymarch and the composite. */
+const CLOUD_UNIFORMS_GLSL = `
+uniform sampler3D uCloudVol;
+uniform vec3 uBodyCenter;
+uniform mat4 uWorldToBody;
+uniform float uPlanetRadius;
+uniform float uCloudBase;
+uniform float uCloudThickness;
+uniform float uCoverage;
+uniform float uExtinction;
+uniform float uWindRate;
+uniform float uEvolve;
+uniform float uTime;
+uniform vec3 uSunLocal;
+`;
+
+/**
+ * Transmittance of sunlight through the cloud deck from body-frame point p
+ * (6 density samples between p, or the deck base, and the deck top).
+ */
+const CLOUD_SHADOW_GLSL = `
+float cloudShadow(vec3 p) {
+  float rb = uPlanetRadius + uCloudBase;
+  float rt = rb + uCloudThickness;
+  float pp = dot(p, p);
+  if (pp > rt * rt) return 1.0;
+  float b = dot(p, uSunLocal);
+  float ht = b * b - (pp - rt * rt);
+  if (ht < 0.0) return 1.0;
+  float t1 = -b + sqrt(ht);
+  float t0 = 0.0;
+  if (pp < rb * rb) t0 = -b + sqrt(max(b * b - (pp - rb * rb), 0.0));
+  if (t1 <= t0) return 1.0;
+  float dt = (t1 - t0) / 6.0;
+  float od = 0.0;
+  for (int i = 0; i < 6; i++) od += cloudDensity(p + uSunLocal * (t0 + (float(i) + 0.5) * dt));
+  return exp(-od * dt * uExtinction * 0.6);
+}
+`;
 /** Cloud buffer resolution relative to the screen. */
 const CLOUD_SCALE = 0.5;
 
@@ -112,52 +177,88 @@ precision highp float;
 precision highp sampler3D;
 varying vec2 vUV;
 uniform vec2 uRes;
-uniform sampler3D uCloudVol;
-uniform vec3 uBodyCenter;
-uniform mat4 uWorldToBody;
-uniform float uPlanetRadius;
-uniform float uCloudBase;
-uniform float uCloudThickness;
-uniform float uCoverage;
-uniform float uExtinction;
-uniform float uWindRate;
-uniform float uTime;
-uniform vec3 uSunLocal;
+${CLOUD_UNIFORMS_GLSL}
 uniform vec3 uSunColor;
 uniform vec3 uAmbient;
 uniform float uSteps;
 uniform float uLightSteps;
+uniform float uShafts;
+uniform float uHazeScale;
 ${CAMERA_GLSL}
 ${CLOUD_DENSITY_GLSL}
+${CLOUD_SHADOW_GLSL}
 
 float hg(float mu, float g) {
   float g2 = g * g;
   return 0.0795775 * (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * mu, 1e-4), 1.5);
 }
 
-bool slab(vec3 o, vec3 d, out float t0, out float t1) {
+/**
+ * The deck along a ray is the top sphere's span minus the base sphere's span:
+ * up to two segments (e.g. from inside the deck, looking down past the base,
+ * the ray reappears in the deck on the far side of this small planet).
+ */
+void deckSegments(vec3 o, vec3 d, out vec2 s0, out vec2 s1) {
+  s0 = vec2(0.0);
+  s1 = vec2(0.0);
   float rb = uPlanetRadius + uCloudBase;
   float rt = rb + uCloudThickness;
   float b = dot(o, d);
-  float c = dot(o, o) - rt * rt;
-  float h = b * b - c;
-  if (h < 0.0) return false;
+  float oo = dot(o, o);
+  float h = b * b - (oo - rt * rt);
+  if (h < 0.0) return;
   h = sqrt(h);
-  float a0 = -b - h;
+  float a0 = max(-b - h, 0.0);
   float a1 = -b + h;
-  if (a1 <= 0.0) return false;
-  float ci = dot(o, o) - rb * rb;
-  float hi = b * b - ci;
-  t0 = max(a0, 0.0);
-  t1 = a1;
-  if (hi > 0.0) {
-    hi = sqrt(hi);
-    float i0 = -b - hi;
-    float i1 = -b + hi;
-    if (i0 > t0) t1 = min(t1, i0);        // looking down through the deck: stop at the base
-    else if (i1 > t0) t0 = max(t0, i1);   // below the deck looking up: start at the base
+  if (a1 <= a0) return;
+  float hi = b * b - (oo - rb * rb);
+  if (hi <= 0.0) {
+    s0 = vec2(a0, a1);
+    return;
   }
-  return t1 > t0;
+  hi = sqrt(hi);
+  float i0 = -b - hi;
+  float i1 = -b + hi;
+  if (i0 > a0) s0 = vec2(a0, min(a1, i0));
+  if (i1 < a1) {
+    vec2 far = vec2(max(a0, i1), a1);
+    if (s0.y > s0.x) s1 = far;
+    else s0 = far;
+  }
+}
+
+void marchDeck(vec3 o, vec3 d, vec2 seg, float steps, float phase, float jitter, inout vec3 scatter, inout float T) {
+  if (seg.y <= seg.x || steps < 0.5) return;
+  float dt = (seg.y - seg.x) / steps;
+  float t = seg.x + jitter * dt;
+  for (int i = 0; i < 96; i++) {
+    if (float(i) >= steps || T < 0.02) break;
+    vec3 p = o + d * t;
+    float den = cloudDensity(p);
+    if (den > 0.002) {
+      // Light march toward the sun through the deck.
+      float ld = uCloudThickness / max(uLightSteps, 1.0);
+      float od = 0.0;
+      for (int j = 0; j < 8; j++) {
+        if (float(j) >= uLightSteps) break;
+        od += cloudDensity(p + uSunLocal * ld * (float(j) + 0.5)) * ld;
+      }
+      float lightT = exp(-od * uExtinction) + 0.25 * exp(-od * uExtinction * 0.2);
+      float h = clamp((length(p) - uPlanetRadius - uCloudBase) / uCloudThickness, 0.0, 1.0);
+      vec3 L = uSunColor * lightT * phase * 6.0 + uAmbient * (0.45 + 0.55 * h);
+      float sigma = den * uExtinction;
+      float a = 1.0 - exp(-sigma * dt);
+      scatter += T * L * a;
+      T *= 1.0 - a;
+    }
+    t += dt;
+  }
+}
+
+float hash12(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
 }
 
 void main() {
@@ -170,46 +271,62 @@ void main() {
                      max(sceneT(vUV + vec2(px.x, -px.y), ray), sceneT(vUV + vec2(-px.x, -px.y), ray)));
   vec3 o = (uWorldToBody * vec4(uCamPos - uBodyCenter, 0.0)).xyz;
   vec3 d = normalize((uWorldToBody * vec4(dirW, 0.0)).xyz);
-  float t0;
-  float t1;
   vec3 scatter = vec3(0.0);
   float T = 1.0;
-  if (uSteps > 0.5 && slab(o, d, t0, t1)) {
-    t1 = min(t1, min(tScene, t0 + 6000.0));
-    if (t1 > t0) {
-      float dt = (t1 - t0) / uSteps;
-      float t = t0 + ign(gl_FragCoord.xy) * dt;
+  if (uSteps > 0.5) {
+    vec2 s0;
+    vec2 s1;
+    deckSegments(o, d, s0, s1);
+    // Stop at the scene and within 8 km of where the deck starts.
+    float tMax = min(tScene, s0.x + 8000.0);
+    s0.y = min(s0.y, tMax);
+    s1.y = min(s1.y, tMax);
+    float l0 = max(s0.y - s0.x, 0.0);
+    float l1 = max(s1.y - s1.x, 0.0);
+    if (l0 + l1 > 0.0) {
+      float n0 = l1 > 0.0 ? max(4.0, floor(uSteps * l0 / (l0 + l1) + 0.5)) : uSteps;
+      float n1 = max(uSteps - n0, l1 > 0.0 ? 4.0 : 0.0);
       float mu = dot(d, uSunLocal);
       float phase = mix(hg(mu, 0.6), hg(mu, -0.25), 0.25);
-      for (int i = 0; i < 96; i++) {
-        if (float(i) >= uSteps || T < 0.02) break;
-        vec3 p = o + d * t;
-        float den = cloudDensity(p);
-        if (den > 0.002) {
-          // Light march toward the sun through the deck.
-          float ld = uCloudThickness / max(uLightSteps, 1.0);
-          float od = 0.0;
-          for (int j = 0; j < 8; j++) {
-            if (float(j) >= uLightSteps) break;
-            od += cloudDensity(p + uSunLocal * ld * (float(j) + 0.5)) * ld;
-          }
-          float lightT = exp(-od * uExtinction) + 0.25 * exp(-od * uExtinction * 0.2);
-          float h = clamp((length(p) - uPlanetRadius - uCloudBase) / uCloudThickness, 0.0, 1.0);
-          vec3 L = uSunColor * lightT * phase * 6.0 + uAmbient * (0.45 + 0.55 * h);
-          float sigma = den * uExtinction;
-          float a = 1.0 - exp(-sigma * dt);
-          scatter += T * L * a;
-          T *= 1.0 - a;
-        }
-        t += dt;
-      }
+      float jitter = ign(gl_FragCoord.xy);
+      marchDeck(o, d, s0, n0, phase, jitter, scatter, T);
+      marchDeck(o, d, s1, n1, phase, jitter, scatter, T);
     }
   }
-  gl_FragColor = vec4(scatter, 1.0 - T);
+  // Light shafts ("god rays"): haze below the deck lit or shadowed by the
+  // clouds. Lit air adds a little, shadowed air takes away, so beams show
+  // where sunlight falls through gaps. (Signed: the buffer is float.)
+  vec3 shafts = vec3(0.0);
+  if (uShafts > 0.5 && uSteps > 0.5) {
+    float rb = uPlanetRadius + uCloudBase;
+    float tEnd = min(tScene, 3500.0);
+    float oo = dot(o, o);
+    if (oo < rb * rb) {
+      float b = dot(o, d);
+      tEnd = min(tEnd, -b + sqrt(max(b * b - (oo - rb * rb), 0.0)));
+    }
+    // White-noise jitter (not a regular pattern) so the steps read as fine
+    // grain rather than rings.
+    float ds = tEnd / 24.0;
+    float ts = hash12(gl_FragCoord.xy) * ds;
+    float acc = 0.0;
+    for (int i = 0; i < 24; i++) {
+      vec3 p = o + d * ts;
+      float h = max(length(p) - uPlanetRadius, 0.0);
+      acc += (cloudShadow(p) - ${SHAFT_BIAS.toFixed(3)}) * exp(-h / uHazeScale) * ds;
+      ts += ds;
+    }
+    float mu = dot(d, uSunLocal);
+    shafts = uSunColor * (hg(mu, 0.76) + 0.08) * acc * ${SHAFT_STRENGTH.toFixed(5)};
+    // Seen from above the deck the shafts are behind the clouds.
+    if (oo > rb * rb) shafts *= T;
+  }
+  gl_FragColor = vec4(scatter + shafts, 1.0 - T);
 }`;
 
 const COMPOSITE_FRAGMENT = `
 precision highp float;
+precision highp sampler3D;
 varying vec2 vUV;
 uniform sampler2D textureSampler; // clouds (premultiplied)
 uniform sampler2D uScene;
@@ -221,8 +338,12 @@ uniform vec3 uCenter[${MAX_ATMO_BODIES}];
 uniform vec4 uRadii[${MAX_ATMO_BODIES}];   // groundR, topR, hR, hM
 uniform vec4 uBeta[${MAX_ATMO_BODIES}];    // betaR.rgb, betaM
 uniform vec2 uMie[${MAX_ATMO_BODIES}];     // betaMExt, g
+uniform float uShadowOn;
+${CLOUD_UNIFORMS_GLSL}
 ${CAMERA_GLSL}
 ${ATMOSPHERE_GLSL}
+${CLOUD_DENSITY_GLSL}
+${CLOUD_SHADOW_GLSL}
 
 void atmosphere(int k, vec3 camPos, vec3 dir, float tMax, inout vec3 col) {
   vec3 o = camPos - uCenter[k];
@@ -281,10 +402,15 @@ void main() {
   vec3 dir = normalize(ray);
   float tScene = sceneT(vUV, ray);
   vec3 col = texture2D(uScene, vUV).rgb;
+  // Cloud shadows on the ground (and anything else in the depth buffer).
+  if (uShadowOn > 0.5 && tScene < 1e19) {
+    vec3 pB = (uWorldToBody * vec4(uCamPos + dir * tScene - uBodyCenter, 0.0)).xyz;
+    col *= mix(1.0, cloudShadow(pB), ${SHADOW_AMOUNT.toFixed(2)});
+  }
   // Clouds sit in front of whatever is behind them (their buffer already
   // stopped at the scene depth).
   vec4 cloud = texture2D(textureSampler, vUV);
-  col = col * (1.0 - cloud.a) + cloud.rgb;
+  col = max(col * (1.0 - cloud.a) + cloud.rgb, vec3(0.0));
   for (int k = 0; k < ${MAX_ATMO_BODIES}; k++) {
     if (float(k) >= uCount) break;
     atmosphere(k, uCamPos, dir, tScene, col);
@@ -340,12 +466,15 @@ export class PlanetaryPass {
         "uCoverage",
         "uExtinction",
         "uWindRate",
+        "uEvolve",
         "uTime",
         "uSunLocal",
         "uSunColor",
         "uAmbient",
         "uSteps",
         "uLightSteps",
+        "uShafts",
+        "uHazeScale",
       ],
       ["uDepth", "uCloudVol"],
       CLOUD_SCALE,
@@ -359,8 +488,20 @@ export class PlanetaryPass {
     this.composite = new PostProcess(
       "planetary-composite",
       "adriftComposite",
-      [...camUniforms, "uSunDir", "uSunE", "uAtmoSteps", "uCount", "uCenter", "uRadii", "uBeta", "uMie"],
-      ["uDepth", "uScene"],
+      [
+        ...camUniforms,
+        "uSunDir",
+        "uSunE",
+        "uAtmoSteps",
+        "uCount",
+        "uCenter",
+        "uRadii",
+        "uBeta",
+        "uMie",
+        "uShadowOn",
+        ...CLOUD_DECK_UNIFORMS,
+      ],
+      ["uDepth", "uScene", "uCloudVol"],
       1,
       camera,
       Texture.BILINEAR_SAMPLINGMODE,
@@ -383,19 +524,12 @@ export class PlanetaryPass {
       e.setTexture("uCloudVol", this.volumeTex);
       e.setFloat("uSteps", f ? q.cloudSteps : 0);
       e.setFloat("uLightSteps", q.lightSteps);
+      e.setFloat("uShafts", f && q.shafts ? 1 : 0);
       if (!f) return;
-      e.setVector3("uBodyCenter", f.center);
-      e.setMatrix("uWorldToBody", f.worldToBody);
-      e.setFloat("uPlanetRadius", f.params.radius);
-      e.setFloat("uCloudBase", f.params.base);
-      e.setFloat("uCloudThickness", f.params.thickness);
-      e.setFloat("uCoverage", f.params.coverage);
-      e.setFloat("uExtinction", f.params.extinction);
-      e.setFloat("uWindRate", f.params.windRate);
-      e.setFloat("uTime", f.time);
-      e.setVector3("uSunLocal", f.sunLocal);
+      this.bindCloudDeck(e, f);
       e.setColor3("uSunColor", f.sunColor);
       e.setColor3("uAmbient", f.ambient);
+      e.setFloat("uHazeScale", f.hazeScale);
     };
 
     const centers = new Float32Array(MAX_ATMO_BODIES * 3);
@@ -406,6 +540,11 @@ export class PlanetaryPass {
       this.bindCamera(e);
       e.setTexture("uDepth", this.depth());
       e.setTextureFromPostProcess("uScene", this.copy);
+      e.setTexture("uCloudVol", this.volumeTex);
+      const cf = this.frame?.clouds ?? null;
+      const shadows = !!cf && QUALITY[this.quality].shadows && QUALITY[this.quality].cloudSteps > 0;
+      e.setFloat("uShadowOn", shadows ? 1 : 0);
+      if (cf) this.bindCloudDeck(e, cf);
       const f = this.frame;
       const bodies = f?.bodies ?? [];
       const n = Math.min(bodies.length, MAX_ATMO_BODIES);
@@ -425,6 +564,20 @@ export class PlanetaryPass {
       e.setVector3("uSunDir", f?.sunDir ?? Vector3.Up());
       e.setColor3("uSunE", f?.sunIlluminance ?? Color3.Black());
     };
+  }
+
+  private bindCloudDeck(e: Effect, f: CloudFrame): void {
+    e.setVector3("uBodyCenter", f.center);
+    e.setMatrix("uWorldToBody", f.worldToBody);
+    e.setFloat("uPlanetRadius", f.params.radius);
+    e.setFloat("uCloudBase", f.params.base);
+    e.setFloat("uCloudThickness", f.params.thickness);
+    e.setFloat("uCoverage", f.params.coverage);
+    e.setFloat("uExtinction", f.params.extinction);
+    e.setFloat("uWindRate", f.params.windRate);
+    e.setFloat("uEvolve", f.params.evolve);
+    e.setFloat("uTime", f.time);
+    e.setVector3("uSunLocal", f.sunLocal);
   }
 
   private bindCamera(e: Effect): void {

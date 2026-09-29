@@ -24,12 +24,39 @@ export interface CloudParams {
   extinction: number;
   /** Wind: drift rate about the spin axis (rad/s). */
   windRate: number;
+  /** Evolution speed of the noise layers (m/s scale; 0 = frozen shapes). */
+  evolve: number;
 }
 
-/** Feature sizes (m) of the coverage, secondary and erosion noise. */
-export const CLOUD_SCALES = { coverage: 1100, secondary: 420, erosion: 90 } as const;
+/** Tile sizes (m) of the 32^3 noise volume per layer (features are ~1/32 of these). */
+export const CLOUD_SCALES = { weather: 20000, coverage: 4500, secondary: 1600, erosion: 260 } as const;
 const OFF2: [number, number, number] = [0.37, 0.11, 0.73];
 const OFF3: [number, number, number] = [0.61, 0.29, 0.17];
+const OFF4: [number, number, number] = [0.13, 0.83, 0.47];
+const OFF0: [number, number, number] = [0, 0, 0];
+
+/**
+ * Evolution: each noise layer drifts through the deck in its own direction
+ * (metres per second per unit of `evolve`), so clouds build, merge and
+ * dissolve instead of sliding by as a rigid pattern - the effect of the
+ * Babylon volumetric-clouds playground (#MAONNT), a little slower.
+ */
+const DRIFT = {
+  weather: [0.5, 0, 0.2],
+  coverage: [1, 0, 0.3],
+  secondary: [-0.6, 0.4, 1.2],
+  erosion: [0.8, 1.5, -0.5],
+} as const;
+
+/**
+ * Weather: a very low-frequency field that scales the local coverage, so
+ * the planet has clear regions, broken cloud and overcast patches instead
+ * of one uniform deck. Returns the coverage multiplier (0.1 .. ~1.5).
+ */
+function weatherScale(w: number): number {
+  const t = sat((w - 0.3) / 0.45);
+  return 0.1 + 1.4 * t * t * (3 - 2 * t);
+}
 
 export class CloudVolumeData {
   constructor(
@@ -102,17 +129,27 @@ export function cloudDensityAt(
   const qz = -s * x + c * z;
   const qy = y;
   const S = CLOUD_SCALES;
-  const cov =
-    0.65 * vol.sample(qx / S.coverage, qy / S.coverage, qz / S.coverage) +
-    0.35 * vol.sample(qx / S.secondary + OFF2[0], qy / S.secondary + OFF2[1], qz / S.secondary + OFF2[2]);
-  const shape = sat((cov - (1 - p.coverage)) / 0.22) * smooth(0, 0.18, h) * smooth(1, 0.55, h);
+  const e = p.evolve * time;
+  const at = (scale: number, drift: readonly number[], off: readonly number[]): number =>
+    vol.sample(
+      (qx + drift[0] * e) / scale + off[0],
+      (qy + drift[1] * e) / scale + off[1],
+      (qz + drift[2] * e) / scale + off[2],
+    );
+  const localCoverage = sat(p.coverage * weatherScale(at(S.weather, DRIFT.weather, OFF4)));
+  const cov = 0.8 * at(S.coverage, DRIFT.coverage, OFF0) + 0.2 * at(S.secondary, DRIFT.secondary, OFF2);
+  // Cloudiness 0..1; denser cores tower higher (tops between 30% and 100% of the deck).
+  const core = sat((cov - (1 - localCoverage)) / 0.3);
+  const top = 0.3 + 0.7 * core;
+  const shape = core * smooth(0, 0.12, h) * smooth(top, top - 0.45, h);
   if (shape <= 0) return 0;
-  const erode = vol.sample(qx / S.erosion + OFF3[0], qy / S.erosion + OFF3[1], qz / S.erosion + OFF3[2]);
-  return sat(shape - (1 - shape) * erode * 0.7);
+  const erode = at(S.erosion, DRIFT.erosion, OFF3);
+  return sat(shape - (1 - shape) * erode * 0.5);
 }
 
 /** GLSL twin of cloudDensityAt (needs `uniform sampler3D uCloudVol` and CloudParams uniforms). */
 export const CLOUD_DENSITY_GLSL = `
+vec3 cloudDrift(vec3 d) { return d * uEvolve * uTime; }
 float cloudDensity(vec3 p) {
   float r = length(p);
   float h = (r - (uPlanetRadius + uCloudBase)) / uCloudThickness;
@@ -121,13 +158,20 @@ float cloudDensity(vec3 p) {
   float c = cos(a);
   float s = sin(a);
   vec3 q = vec3(c * p.x + s * p.z, p.y, -s * p.x + c * p.z);
-  float cov = 0.65 * texture(uCloudVol, q / ${CLOUD_SCALES.coverage.toFixed(1)}).r
-            + 0.35 * texture(uCloudVol, q / ${CLOUD_SCALES.secondary.toFixed(1)} + vec3(${OFF2.join(", ")})).r;
-  float shape = clamp((cov - (1.0 - uCoverage)) / 0.22, 0.0, 1.0)
-              * smoothstep(0.0, 0.18, h) * smoothstep(1.0, 0.55, h);
+  float wth = clamp((texture(uCloudVol, (q + cloudDrift(vec3(${DRIFT.weather.join(", ")}))) / ${CLOUD_SCALES.weather.toFixed(1)}
+                     + vec3(${OFF4.join(", ")})).r - 0.3) / 0.45, 0.0, 1.0);
+  float localCoverage = clamp(uCoverage * (0.1 + 1.4 * wth * wth * (3.0 - 2.0 * wth)), 0.0, 1.0);
+  float cov = 0.8 * texture(uCloudVol, (q + cloudDrift(vec3(${DRIFT.coverage.join(", ")}))) / ${CLOUD_SCALES.coverage.toFixed(1)}
+                     + vec3(${OFF0.join(", ")})).r
+            + 0.2 * texture(uCloudVol, (q + cloudDrift(vec3(${DRIFT.secondary.join(", ")}))) / ${CLOUD_SCALES.secondary.toFixed(1)}
+                     + vec3(${OFF2.join(", ")})).r;
+  float core = clamp((cov - (1.0 - localCoverage)) / 0.3, 0.0, 1.0);
+  float top = 0.3 + 0.7 * core;
+  float shape = core * smoothstep(0.0, 0.12, h) * smoothstep(top, top - 0.45, h);
   if (shape <= 0.0) return 0.0;
-  float erode = texture(uCloudVol, q / ${CLOUD_SCALES.erosion.toFixed(1)} + vec3(${OFF3.join(", ")})).r;
-  return clamp(shape - (1.0 - shape) * erode * 0.7, 0.0, 1.0);
+  float erode = texture(uCloudVol, (q + cloudDrift(vec3(${DRIFT.erosion.join(", ")}))) / ${CLOUD_SCALES.erosion.toFixed(1)}
+                     + vec3(${OFF3.join(", ")})).r;
+  return clamp(shape - (1.0 - shape) * erode * 0.5, 0.0, 1.0);
 }`;
 
 /** Procedural 32^3 tiling value-noise volume (fallback when the .bin can't load). */
