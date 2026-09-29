@@ -2,6 +2,9 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests",
+  // Screenshot/diagnostic scripts (no assertions) run only on demand via
+  // playwright.diagnostics.config.ts (`npm run test:shots`).
+  testIgnore: ["**/diagnostics/**"],
   timeout: 90000,
   use: {
     baseURL: "http://localhost:4173",

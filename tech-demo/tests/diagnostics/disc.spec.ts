@@ -1,5 +1,5 @@
 import { test } from "@playwright/test";
-import { boot } from "./helpers";
+import { boot } from "../helpers";
 
 test("identify white disc", async ({ page }) => {
   test.setTimeout(180000);

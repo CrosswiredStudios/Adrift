@@ -56,3 +56,8 @@ export function createLighting(scene: Scene, sunDir: Vector3): LightingRig {
 export function twilightFactor(sunAbove: number, atmo: number): number {
   return smoothstep(0.4, 0.0, Math.abs(sunAbove)) * atmo;
 }
+
+/** Daylight ramp shared by the sky, lighting, and atmosphere updates. */
+export function daylightFactor(sunAbove: number): number {
+  return smoothstep(-0.06, 0.3, sunAbove);
+}

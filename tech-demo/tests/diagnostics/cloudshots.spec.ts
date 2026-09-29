@@ -1,5 +1,5 @@
 import { test } from "@playwright/test";
-import { boot, orbitAim, placeAt, stepFrames } from "./helpers";
+import { boot, orbitAim, placeAt, stepFrames } from "../helpers";
 test("cloud screenshots", async ({ page }) => {
   await page.setViewportSize({ width: 960, height: 540 });
   await boot(page);

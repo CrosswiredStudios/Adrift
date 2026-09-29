@@ -4,10 +4,11 @@
  * ParticleSystem construction directly. The system is created lazily per
  * scene and reused across splashdowns.
  */
-import { Color4, Constants, Mesh, ParticleSystem, Scene, Texture, Vector3 } from "@babylonjs/core";
+import { Color4, Constants, ParticleSystem, Scene, Texture, Vector3 } from "@babylonjs/core";
 
 export interface SplashHandle {
-  burst(ship: Mesh, impactSpeed: number): void;
+  /** Spray burst at a world position, scaled by impact speed. */
+  burstAt(position: Vector3, impactSpeed: number): void;
   dispose(): void;
 }
 
@@ -32,9 +33,9 @@ export function createSplash(scene: Scene): SplashHandle {
   let emitter: Vector3 | null = null;
 
   return {
-    burst(ship: Mesh, impactSpeed: number): void {
+    burstAt(position: Vector3, impactSpeed: number): void {
       if (!system) {
-        emitter = ship.position.clone();
+        emitter = position.clone();
         const ps = new ParticleSystem("splash", 220, scene);
         ps.particleTexture = splashTexture(scene);
         ps.emitter = emitter;
@@ -56,7 +57,7 @@ export function createSplash(scene: Scene): SplashHandle {
         system = ps;
       }
       if (emitter && system) {
-        emitter.copyFrom(ship.position);
+        emitter.copyFrom(position);
         system.manualEmitCount = Math.max(4, Math.min(70, Math.round(5 + impactSpeed * 2)));
       }
     },

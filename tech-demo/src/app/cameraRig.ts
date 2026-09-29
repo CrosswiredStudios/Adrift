@@ -3,7 +3,8 @@
  * vector (banking no longer whips the world around), time-based atmospheric
  * shake, and speed-driven FOV kick.
  */
-import { FreeCamera, Mesh, Quaternion, Vector3 } from "@babylonjs/core";
+import { FreeCamera, Quaternion, Vector3 } from "@babylonjs/core";
+import type { Pose } from "../common/pose";
 import { IWorldBody, nearestWorldBody } from "../world/worldBody";
 import type { FlightState } from "../flight/flight";
 import { clamp } from "../common/math";
@@ -15,10 +16,10 @@ export interface CameraRig {
 
 export function createCameraRig<T extends IWorldBody>(
   camera: FreeCamera,
-  ship: Mesh,
+  ship: Pose,
   state: FlightState,
   bodies: T[],
-  input: Record<string, boolean>,
+  isBoosting: () => boolean,
   spawnUp: Vector3,
 ): CameraRig {
   const rot0 = ship.rotationQuaternion ?? Quaternion.Identity();
@@ -67,7 +68,7 @@ export function createCameraRig<T extends IWorldBody>(
       camera.upVector.copyFrom(camUp);
       camera.setTarget(ship.position.add(state.velocity.scale(0.03))); // slight look-ahead
 
-      const targetFov = 60 + Math.min(18, speed * 0.06) + (input["shift"] && input["arrowup"] ? 5 : 0);
+      const targetFov = 60 + Math.min(18, speed * 0.06) + (isBoosting() ? 5 : 0);
       camFov += (targetFov - camFov) * (1 - Math.exp(-3 * dt));
       camera.fov = (camFov / 180) * Math.PI;
     },

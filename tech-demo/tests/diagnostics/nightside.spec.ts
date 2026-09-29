@@ -1,5 +1,5 @@
 import { test } from "@playwright/test";
-import { boot, collectErrors, expectNoErrors, placeAt, stepFrames } from "./helpers";
+import { boot, collectErrors, expectNoErrors, placeAt, stepFrames } from "../helpers";
 
 test("night side debug", async ({ page }) => {
   test.setTimeout(180000);

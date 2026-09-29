@@ -1,4 +1,4 @@
-import { Mesh } from "@babylonjs/core";
+import type { Pose } from "../common/pose";
 import { IWorldBody } from "../world/worldBody";
 import { FlightState } from "../flight/flight";
 
@@ -8,7 +8,7 @@ function bar(frac: number, width = 12): string {
   return `[${"#".repeat(filled)}${"-".repeat(width - filled)}]`;
 }
 
-export function updateHud(el: HTMLElement, ship: Mesh, state: FlightState, bodies: IWorldBody[]): void {
+export function updateHud(el: HTMLElement, ship: Pose, state: FlightState, bodies: IWorldBody[]): void {
   const speed = state.velocity.length();
   const lines = bodies.map((b) => {
     const alt = b.surfaceAltitudeAt(ship.position);

@@ -10,8 +10,9 @@ export type Dir = number[];
 /** Load the app and wait for the deterministic debug handle. */
 export async function boot(page: Page, waitForVegetation = false): Promise<void> {
   await page.goto("/", { waitUntil: "networkidle" });
+  // Software GL on CI/headless boxes compiles shaders slowly: allow 90 s.
   await page.waitForFunction(() => (window as unknown as { __game?: unknown }).__game !== undefined, null, {
-    timeout: 30000,
+    timeout: 90000,
   });
   if (waitForVegetation) {
     await page.waitForFunction(

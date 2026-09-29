@@ -1,9 +1,9 @@
 import { Mesh, Scene, Vector3, Quaternion } from "@babylonjs/core";
+import type { Pose } from "../common/pose";
 import { IWorldBody, nearestWorldBody } from "../world/worldBody";
 import { buildShip, ShipRig } from "./shipBuilder";
 import { clamp } from "../common/math";
 import { DEFAULT_TUNING, FlightTuning } from "./flightTuning";
-import { SplashHandle, createSplash } from "./shipFx";
 
 export interface FlightState {
   velocity: Vector3;
@@ -29,35 +29,32 @@ export interface FlightState {
   rig: ShipRig | null;
 }
 
-/** Combined steering deflection per axis (-1..1), keyboard + pointer added together. */
+/** Combined steering deflection per axis (-1..1). */
 export interface SteerState {
-  /** +1 = nose up (W); cursor above screen center is +. */
+  /** +1 = nose up. */
   pitch: number;
-  /** +1 = nose left (A); cursor right of screen center is -. */
+  /** +1 = nose left. */
   yaw: number;
-  /** +1 = roll right (E), -1 = roll left (Q). */
+  /** +1 = roll right, -1 = roll left. */
   roll: number;
+}
+
+/** Engine commands for one sim step (from input actions, an autopilot or a test). */
+export interface EngineCommand {
+  throttleUp: boolean;
+  throttleDown: boolean;
+  brake: boolean;
+  boost: boolean;
+}
+
+/** One-shot effects the flight model asks for (keeps particles out of physics). */
+export interface FlightFx {
+  splash(position: Vector3, impactSpeed: number): void;
 }
 
 // --- Arcade tuning --------------------------------------------------------
 // Values live in flightTuning.ts (DEFAULT_TUNING); updateShip takes an
 // optional override so tests/variants can tune without editing physics.
-
-// --- Water splash (one-shot spray on splashdown) ---------------------------
-// Owned per-scene via createSplash (see shipFx.ts); lazily created on first
-// water contact so flight.ts never constructs ParticleSystems at import time.
-const splashByScene = new WeakMap<Scene, SplashHandle>();
-
-/** Spray burst scaled by impact speed (called at the moment of water contact). */
-function burstSplash(ship: Mesh, impactSpeed: number): void {
-  const scene = ship.getScene();
-  let splash = splashByScene.get(scene);
-  if (!splash) {
-    splash = createSplash(scene);
-    splashByScene.set(scene, splash);
-  }
-  splash.burst(ship, impactSpeed);
-}
 
 /** Nearest body measured by height above its visible surface. */
 function nearestBody<T extends IWorldBody>(bodies: T[], position: Vector3): T | null {
@@ -69,7 +66,7 @@ function nearestBody<T extends IWorldBody>(bodies: T[], position: Vector3): T | 
  * (radians; + = right wing down). Exposed for the HUD/tests and mirrored by
  * the roll controller so both always agree on which way is "level".
  */
-export function bankAngle(ship: Mesh, bodies: IWorldBody[]): number {
+export function bankAngle(ship: Pose, bodies: IWorldBody[]): number {
   const q = ship.rotationQuaternion ?? Quaternion.Identity();
   const nose = new Vector3(0, 0, 1).applyRotationQuaternion(q);
   const up = new Vector3(0, 1, 0).applyRotationQuaternion(q);
@@ -84,28 +81,22 @@ export function bankAngle(ship: Mesh, bodies: IWorldBody[]): number {
   return Math.atan2(Vector3.Dot(up, rightH), Vector3.Dot(up, upH));
 }
 
-export function createShip(scene: Scene): Mesh {
+export function createShip(scene: Scene): { mesh: Mesh; rig: ShipRig } {
   const rig = buildShip(scene);
-  const ship = rig.root;
-  (ship as Mesh & { __rig?: ShipRig }).__rig = rig;
-  return ship;
-}
-
-export function getRig(ship: Mesh): ShipRig | null {
-  return (ship as Mesh & { __rig?: ShipRig }).__rig ?? null;
+  return { mesh: rig.root, rig };
 }
 
 export function updateShip<T extends IWorldBody>(
-  ship: Mesh,
+  ship: Pose,
   state: FlightState,
   bodies: T[],
-  input: Record<string, boolean>,
+  engine: EngineCommand,
   steer: SteerState,
   dt: number,
   tuning: FlightTuning = DEFAULT_TUNING,
+  fx?: FlightFx,
 ): void {
-  const rig = state.rig ?? getRig(ship);
-  if (rig && !state.rig) state.rig = rig;
+  const rig = state.rig;
 
   const q0 = ship.rotationQuaternion ?? Quaternion.Identity();
   const nose0 = new Vector3(0, 0, 1).applyRotationQuaternion(q0);
@@ -129,15 +120,15 @@ export function updateShip<T extends IWorldBody>(
   state.altitude = nearestAlt;
 
   // --- Speed: persistent arcade cruise, throttle / boost / brake.
-  const boosting = !!input["shift"];
-  const thrusting = !!input["arrowup"];
-  const braking = !!input["space"] || !!input["c"];
+  const boosting = engine.boost;
+  const thrusting = engine.throttleUp;
+  const braking = engine.brake;
   let cruise = state.cruise;
   if (braking) {
     cruise -= 200 * dt; // full brake always works, even while thrusting
   } else {
     if (thrusting) cruise += (boosting ? 260 : 60) * dt;
-    if (input["arrowdown"]) cruise -= 90 * dt;
+    if (engine.throttleDown) cruise -= 90 * dt;
   }
   if (cruise > tuning.speedSoftMax && !(boosting && thrusting)) {
     cruise = Math.max(tuning.speedSoftMax, cruise - 150 * dt); // soft cap decay
@@ -274,7 +265,7 @@ export function updateShip<T extends IWorldBody>(
       ship.position.copyFrom(nearest.center).addInPlace(dirNow.scale(restR + tuning.clearance));
       const vN = state.verticalSpeed;
       if (vN < 0) {
-        if (overWater && vN < -1.5) burstSplash(ship, -vN);
+        if (overWater && vN < -1.5) fx?.splash(ship.position, -vN);
         if (vN > -tuning.softImpact) {
           // Gentle touchdown: kill the normal component, scrub the slide.
           state.velocity.addInPlace(dirNow.scale(-vN));
@@ -320,6 +311,5 @@ export function updateShip<T extends IWorldBody>(
     const thrustFx = braking ? 0.1 : thrusting ? (boosting ? 1 : 0.65) : 0.15;
     rig.setThrust(thrustFx);
     rig.setHeat(state.heat);
-    rig.update(dt);
   }
 }

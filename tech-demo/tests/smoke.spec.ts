@@ -94,7 +94,7 @@ test("takeoff to space transitions atmosphere to zero", async ({ page }) => {
     g.ship.rotationQuaternion.set(qx, qy, qz, qw);
     // Arcade scheme: Up arrow = throttle up; W pitches the nose, so leave it alone here.
     g.state.cruise = 120;
-    g.input["arrowup"] = true;
+    g.input.setAxis("thrustZ", 1);
     const samples = [];
     for (let i = 0; i < 2400; i++) {
       g.step(1 / 60); // up to 40 simulated seconds of powered climb
@@ -107,7 +107,7 @@ test("takeoff to space transitions atmosphere to zero", async ({ page }) => {
         });
       }
     }
-    g.input["arrowup"] = false;
+    g.input.setAxis("thrustZ", undefined);
     return samples;
   });
   console.log(JSON.stringify(climb, null, 2));
@@ -161,7 +161,7 @@ test("reentry heats up and lands back in atmosphere", async ({ page }) => {
     g.ship.rotationQuaternion.set(qx, qy, qz, qw);
     // Arcade scheme: fast cruise dives under Up-arrow throttle (W is pitch).
     g.state.cruise = 300;
-    g.input["arrowup"] = true; // dive under throttle power
+    g.input.setAxis("thrustZ", 1); // dive under throttle power
     let peakHeat = 0;
     let peakSpeed = 0;
     let final = null;
@@ -180,7 +180,7 @@ test("reentry heats up and lands back in atmosphere", async ({ page }) => {
       peakHeat = Math.max(peakHeat, g.state.heat);
       peakSpeed = Math.max(peakSpeed, g.state.velocity.length());
     }
-    g.input["arrowup"] = false;
+    g.input.setAxis("thrustZ", undefined);
     // Landing phase: reset to a gentle ~20-degree glide approach so the
     // constant cruise thrust drives a soft touchdown (proves atmosphere
     // flight is landable; the hot dive above already proved heating).
@@ -266,6 +266,7 @@ test("atmosphere shells hand off by altitude and stars skip the glow layer", asy
     g.state.velocity.set(0, 0, 0);
     g.state.cruise = 0;
     for (let i = 0; i < 10; i++) g.step(1 / 60);
+    g.render(); // visual state (sky factor, shell visibility) updates per rendered frame
     return {
       alt: g.state.altitude,
       atmo: g.state.atmoDensity,

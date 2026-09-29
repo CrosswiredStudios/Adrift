@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { Mesh, Quaternion, Scene, Vector3 } from "@babylonjs/core";
-import { NullEngine } from "@babylonjs/core/Engines/nullEngine";
-import { FlightState, updateShip } from "./flight";
+import { Quaternion, Vector3 } from "@babylonjs/core";
+import { EngineCommand, FlightState, updateShip } from "./flight";
+import { Pose, makePose } from "../common/pose";
 import { IWorldBody } from "../world/worldBody";
 
 /**
@@ -25,12 +25,11 @@ function makePlaneBody(): IWorldBody {
   };
 }
 
-function makeShip(scene: Scene): Mesh {
-  const ship = new Mesh("ship", scene);
-  ship.position = new Vector3(0, 10, 0);
-  ship.rotationQuaternion = Quaternion.Identity();
-  return ship;
+function makeShip(): Pose {
+  return makePose(new Vector3(0, 10, 0), Quaternion.Identity());
 }
+
+const idle: EngineCommand = { throttleUp: false, throttleDown: false, brake: false, boost: false };
 
 function makeState(): FlightState {
   return {
@@ -50,40 +49,32 @@ function makeState(): FlightState {
 
 describe("updateShip against IWorldBody stub", () => {
   it("holds still with no input and lands when dropped", () => {
-    const engine = new NullEngine();
-    const scene = new Scene(engine);
-    const ship = makeShip(scene);
+    const ship = makeShip();
     const state = makeState();
     const bodies = [makePlaneBody()];
 
     // No input, no cruise: gravity is mu=0 so the ship hangs at alt 10.
-    updateShip(ship, state, bodies, {}, { pitch: 0, yaw: 0, roll: 0 }, 1 / 60);
+    updateShip(ship, state, bodies, idle, { pitch: 0, yaw: 0, roll: 0 }, 1 / 60);
     expect(state.altitude).toBeCloseTo(10, 3);
     expect(state.landed).toBe(false);
 
     // Teleport into contact with downward velocity: contact clamps + lands.
-    ship.position = new Vector3(0, 1.0, 0);
+    ship.position.set(0, 1.0, 0);
     state.velocity = new Vector3(0, -2, 0);
-    updateShip(ship, state, bodies, {}, { pitch: 0, yaw: 0, roll: 0 }, 1 / 60);
+    updateShip(ship, state, bodies, idle, { pitch: 0, yaw: 0, roll: 0 }, 1 / 60);
     expect(state.landed).toBe(true);
     expect(ship.position.y).toBeCloseTo(1.2, 2);
-    scene.dispose();
-    engine.dispose();
   });
 
   it("cruise throttle accelerates along the nose", () => {
-    const engine = new NullEngine();
-    const scene = new Scene(engine);
-    const ship = makeShip(scene);
+    const ship = makeShip();
     const state = makeState();
     const bodies = [makePlaneBody()];
 
     for (let i = 0; i < 60; i++) {
-      updateShip(ship, state, bodies, { arrowup: true }, { pitch: 0, yaw: 0, roll: 0 }, 1 / 60);
+      updateShip(ship, state, bodies, { ...idle, throttleUp: true }, { pitch: 0, yaw: 0, roll: 0 }, 1 / 60);
     }
     expect(state.cruise).toBeGreaterThan(30);
     expect(state.velocity.length()).toBeGreaterThan(10);
-    scene.dispose();
-    engine.dispose();
   });
 });
