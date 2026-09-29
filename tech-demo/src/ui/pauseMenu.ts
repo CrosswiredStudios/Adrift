@@ -19,16 +19,17 @@ export interface PauseMenu {
   setStatus(text: string): void;
 }
 
-const CONTROL_ROWS: { label: string; axes?: AxisAction[]; buttons?: ButtonAction[] }[] = [
-  { label: "Ship: thrust fwd/back", axes: ["thrustZ"] },
+/** `posFirst`: list the positive key first, matching the label's word order. */
+const CONTROL_ROWS: { label: string; axes?: AxisAction[]; buttons?: ButtonAction[]; posFirst?: boolean }[] = [
+  { label: "Ship: thrust fwd/back", axes: ["thrustZ"], posFirst: true },
   { label: "Ship: strafe", axes: ["thrustX"] },
-  { label: "Ship: up/down", axes: ["thrustY"] },
+  { label: "Ship: up/down", axes: ["thrustY"], posFirst: true },
   { label: "Ship: pitch / yaw", axes: ["pitch", "yaw"] },
   { label: "Ship: roll", axes: ["roll"] },
   { label: "Ship: boost", buttons: ["boost"] },
   { label: "Ship: flight assist", buttons: ["toggleAssist"] },
   { label: "Ship: match velocity", buttons: ["matchVelocity"] },
-  { label: "On foot: move", axes: ["moveZ", "moveX"] },
+  { label: "On foot: move", axes: ["moveZ", "moveX"], posFirst: true },
   { label: "On foot: jump / sprint", buttons: ["jump", "sprint"] },
   { label: "Interact / board / exit", buttons: ["interact"] },
   { label: "Inventory", buttons: ["inventory"] },
@@ -77,8 +78,9 @@ export function createPauseMenu(
     table.innerHTML = "";
     for (const r of CONTROL_ROWS) {
       const parts: string[] = [];
-      for (const a of r.axes ?? []) parts.push(map.axes[a].map(describeBinding).join(", "));
-      for (const b of r.buttons ?? []) parts.push(map.buttons[b].map(describeBinding).join(", "));
+      const list = (bs: string[]): string => [...new Set(bs)].join(", ");
+      for (const a of r.axes ?? []) parts.push(list(map.axes[a].map((b) => describeBinding(b, r.posFirst))));
+      for (const b of r.buttons ?? []) parts.push(list(map.buttons[b].map((x) => describeBinding(x))));
       const tr = document.createElement("tr");
       const td1 = document.createElement("td");
       td1.textContent = r.label;

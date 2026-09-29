@@ -1,45 +1,38 @@
 import { test, expect } from "@playwright/test";
-import { boot, collectErrors, expectNoErrors, stepFrames } from "./helpers";
+import { expectNoErrors, sharedGame } from "./helpers";
 
-test("Esc pauses the sim with an overlay and resumes", async ({ page }) => {
-  const errors = collectErrors(page);
-  await boot(page);
+const shared = sharedGame();
 
-  // Overlay starts hidden and the game unpaused.
-  const initial = await page.evaluate(() => ({
-    visible: document.getElementById("pause")?.classList.contains("visible") ?? false,
-    paused: (window as unknown as { __game: any }).__game.paused(),
-  }));
-  expect(initial.visible).toBe(false);
-  expect(initial.paused).toBe(false);
+const overlayVisible = (): boolean =>
+  document.getElementById("pause")?.classList.contains("visible") ?? false;
 
-  // Esc opens the overlay and freezes the sim across realtime frames.
+test("Esc pauses with an overlay, freezes the sim, and resumes", async () => {
+  const page = shared.page();
+  expect(await page.evaluate(overlayVisible)).toBe(false);
+
   await page.keyboard.press("Escape");
-  await page.waitForFunction(() => document.getElementById("pause")?.classList.contains("visible") === true);
-  const frozen = await page.evaluate(() => {
-    const g = (window as unknown as { __game: any }).__game;
-    return { paused: g.paused(), pos: g.ship.position.asArray() };
-  });
-  expect(frozen.paused).toBe(true);
+  await page.waitForFunction(overlayVisible);
+  const t0 = await page.evaluate(() => (window as any).__game.time());
   await page.waitForTimeout(2500);
-  const still = await page.evaluate(() => {
-    const g = (window as unknown as { __game: any }).__game;
-    return { paused: g.paused(), pos: g.ship.position.asArray() };
-  });
-  expect(still.paused).toBe(true);
-  expect(still.pos).toEqual(frozen.pos);
+  const t1 = await page.evaluate(() => (window as any).__game.time());
+  expect(t1).toBe(t0); // no real-time simulation while paused
+  // The controls list is generated from the live bindings.
+  const controls = await page.evaluate(() => document.querySelector(".pause-controls")?.textContent ?? "");
+  expect(controls).toContain("W/S");
 
-  // Esc toggles back off; the sim advances again via deterministic steps.
   await page.keyboard.press("Escape");
-  await page.waitForFunction(() => document.getElementById("pause")?.classList.contains("visible") === false);
-  expect(await page.evaluate(() => (window as unknown as { __game: any }).__game.paused())).toBe(false);
-  await stepFrames(page, 60, 1 / 60);
+  await page.waitForFunction(
+    () => !(document.getElementById("pause")?.classList.contains("visible") ?? true),
+  );
+  expect(await page.evaluate(() => (window as any).__game.paused())).toBe(false);
 
-  // The Resume button path also pauses and resumes.
+  // The Resume button also works.
   await page.keyboard.press("Escape");
-  await page.waitForFunction(() => document.getElementById("pause")?.classList.contains("visible") === true);
+  await page.waitForFunction(overlayVisible);
   await page.click("#resume");
-  await page.waitForFunction(() => document.getElementById("pause")?.classList.contains("visible") === false);
-  expect(await page.evaluate(() => (window as unknown as { __game: any }).__game.paused())).toBe(false);
-  expectNoErrors(errors);
+  await page.waitForFunction(
+    () => !(document.getElementById("pause")?.classList.contains("visible") ?? true),
+  );
+  expect(await page.evaluate(() => (window as any).__game.paused())).toBe(false);
+  expectNoErrors(shared.errors());
 });

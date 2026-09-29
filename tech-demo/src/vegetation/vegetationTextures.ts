@@ -1,6 +1,7 @@
-import { Color3, DynamicTexture, Scene, Texture } from "@babylonjs/core";
-import { fbm3 } from "../common/noise";
+import { Color3, DynamicTexture, RawTexture, Scene, Texture } from "@babylonjs/core";
+import { fbm } from "../terrain/noise";
 import { clamp01 } from "../common/math";
+import { mulberry32 } from "../common/rng";
 import { makeFallbackTexture, makeFlatNormal } from "../common/textures";
 import type { VegetationLook } from "./vegetationLook";
 
@@ -19,8 +20,8 @@ export interface VegetationTextures {
   needleOpacity: Texture;
   plantsColor: Texture;
   plantsOpacity: Texture;
-  firColor: Texture;
-  firOpacity: Texture;
+  /** Procedural grass tuft (colour + alpha in one RGBA map). */
+  grass: Texture;
   /** Names of the maps that failed to load and were replaced procedurally. */
   fallbacks: string[];
 }
@@ -35,7 +36,7 @@ function makeFallbackOpacity(scene: Scene, name: string, seed: number): Texture 
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const o = (y * size + x) * 4;
-      const v = fbm3(x * 0.055, y * 0.055, seed * 0.17, 4, seed) * 0.5 + 0.5;
+      const v = fbm(x * 0.055, y * 0.055, seed * 0.17, 4, seed) * 0.5 + 0.5;
       const dx = (x / size - 0.5) * 2,
         dy = (y / size - 0.5) * 2;
       const edge = 1 - Math.min(1, Math.hypot(dx, dy));
@@ -170,22 +171,115 @@ export function loadVegetationTextures(scene: Scene, name: string, look: Vegetat
       out.plantsOpacity = asOpacity(t);
     },
   );
-  out.firColor = loadOne(
-    scene,
-    `${name}-veg-fir`,
-    look.firColor,
-    fallbacks,
-    green(0.26, 0.44, 0.18, 11),
-    (t) => {
-      out.firColor = t;
-    },
-  );
-  out.firOpacity = loadOne(scene, `${name}-veg-fir-o`, look.firOpacity, fallbacks, opacityFb(13), (t) => {
-    out.firOpacity = asOpacity(t);
-  });
+  out.grass = makeGrassTuft(scene, `${name}-veg-grass`, 11);
   asOpacity(out.canopyOpacity);
   asOpacity(out.needleOpacity);
   asOpacity(out.plantsOpacity);
-  asOpacity(out.firOpacity);
   return out;
+}
+
+const whenReady = (t: Texture): Promise<void> =>
+  new Promise((resolve) => {
+    if (t.isReady()) resolve();
+    else t.onLoadObservable.addOnce(() => resolve());
+  });
+
+/**
+ * Bake a luminance opacity map into the alpha channel of a colour map.
+ *
+ * Alpha-tested materials with a separate opacity texture render fine, but
+ * Babylon's depth renderer alpha-tests with the *albedo* alpha only, so the
+ * cards would land in the scene depth as solid quads. With the opacity in
+ * albedo alpha, foliage can be part of the scene depth (correct haze, clouds
+ * and waterline around trees). Resolves to null if the maps can't be merged
+ * (different sizes, unreadable), in which case the caller keeps the split maps.
+ */
+export async function mergeOpacityIntoAlbedo(
+  scene: Scene,
+  name: string,
+  color: Texture,
+  opacity: Texture,
+): Promise<Texture | null> {
+  await Promise.all([whenReady(color), whenReady(opacity)]);
+  const cs = color.getSize();
+  const os = opacity.getSize();
+  if (cs.width !== os.width || cs.height !== os.height || cs.width === 0) return null;
+  const [c, o] = await Promise.all([color.readPixels(), opacity.readPixels()]);
+  if (!(c instanceof Uint8Array) || !(o instanceof Uint8Array)) return null;
+  const out = new Uint8Array(c.length);
+  for (let i = 0; i < out.length; i += 4) {
+    out[i] = c[i];
+    out[i + 1] = c[i + 1];
+    out[i + 2] = c[i + 2];
+    out[i + 3] = o[i];
+  }
+  const tex = RawTexture.CreateRGBATexture(
+    out,
+    cs.width,
+    cs.height,
+    scene,
+    true,
+    false,
+    Texture.TRILINEAR_SAMPLINGMODE,
+  );
+  tex.name = name;
+  tex.gammaSpace = color.gammaSpace;
+  tex.anisotropicFilteringLevel = color.anisotropicFilteringLevel;
+  tex.wrapU = color.wrapU;
+  tex.wrapV = color.wrapV;
+  return tex;
+}
+
+/**
+ * Grass tuft card: a few dozen tapered, slightly curved blades rising from
+ * the bottom edge, drawn procedurally with colour and alpha in one RGBA map
+ * (so the depth pass alpha-tests it too). Darker at the base for a cheap
+ * ambient-occlusion look.
+ */
+export function makeGrassTuft(scene: Scene, name: string, seed: number): Texture {
+  const W = 256;
+  const H = 256;
+  const tex = new DynamicTexture(name, { width: W, height: H }, scene, true, Texture.TRILINEAR_SAMPLINGMODE);
+  tex.hasAlpha = true;
+  const ctx = tex.getContext() as CanvasRenderingContext2D;
+  ctx.clearRect(0, 0, W, H);
+  // Texture rows are uploaded bottom-up relative to the canvas: draw
+  // flipped so the blade roots end up on the card's bottom edge.
+  ctx.save();
+  ctx.translate(0, H);
+  ctx.scale(1, -1);
+  const rng = mulberry32(seed);
+  const blades = 46;
+  for (let i = 0; i < blades; i++) {
+    const x0 = W * (0.08 + 0.84 * rng());
+    const h = H * (0.45 + 0.53 * rng());
+    const lean = (rng() - 0.5) * W * 0.35;
+    const w = 3 + rng() * 5;
+    const tipX = x0 + lean;
+    const tipY = H - h;
+    const ctrlX = x0 + lean * 0.25;
+    const ctrlY = H - h * 0.55;
+    const light = 0.75 + 0.5 * rng();
+    const grad = ctx.createLinearGradient(0, H, 0, tipY);
+    const base = (k: number, a = 1): string =>
+      `rgba(${Math.round(52 * k * light)}, ${Math.round(88 * k * light)}, ${Math.round(30 * k * light)}, ${a})`;
+    grad.addColorStop(0, base(0.45));
+    grad.addColorStop(0.35, base(0.9));
+    grad.addColorStop(
+      1,
+      `rgba(${Math.round(150 * light)}, ${Math.round(160 * light)}, ${Math.round(70 * light)}, 1)`,
+    );
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(x0 - w, H);
+    ctx.quadraticCurveTo(ctrlX - w * 0.6, ctrlY, tipX, tipY);
+    ctx.quadraticCurveTo(ctrlX + w * 0.6, ctrlY, x0 + w, H);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+  tex.update(false);
+  tex.wrapU = Texture.CLAMP_ADDRESSMODE;
+  tex.wrapV = Texture.CLAMP_ADDRESSMODE;
+  return tex;
 }

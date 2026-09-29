@@ -106,7 +106,7 @@ export const VESPER_DRIFT: BodyDef[] = [
     radius: 2000,
     mu: G(2000, 9.81),
     orbit: { parent: "vesper", radius: 300000, phase: 0 },
-    spin: { period: 1200, tilt: 0.21, tiltAzimuth: 0.4, phase: 2.2 },
+    spin: { period: 1200, tilt: 0.21, tiltAzimuth: 0.4, phase: 0.5 },
     terrain: {
       seed: 1337,
       radius: 2000,
@@ -154,7 +154,7 @@ export const VESPER_DRIFT: BodyDef[] = [
     kind: "moon",
     radius: 600,
     mu: G(600, 1.62),
-    orbit: { parent: "vael", radius: 12000, phase: 0.55, inclination: 0.09 },
+    orbit: { parent: "vael", radius: 12000, phase: 1.5, inclination: 0.09 },
     spin: { period: 0, tidallyLocked: true },
     terrain: {
       seed: 777,

@@ -134,11 +134,21 @@ export function belowHorizon(
   return theta - halfSize > Math.acos(ro / D) + Math.acos(ro / rTop);
 }
 
-/** Desired leaves for a camera position (body frame). */
+/**
+ * Desired leaves for a camera position (body frame).
+ *
+ * Refinement is progressive: a node only splits once it has been built
+ * itself (`bounds` known), so the tree deepens one level at a time around
+ * the camera and there is always a close ancestor to draw while the finer
+ * chunks stream in (instead of falling back to the face roots). Pass
+ * `progressive = false` to get the full target set regardless of what is
+ * built (tests, planning).
+ */
 export function selectLeaves(
   cam: [number, number, number],
   params: LodParams,
   bounds: (key: string) => ChunkBoundsInfo | undefined,
+  progressive = false,
 ): { node: LodNode; distance: number }[] {
   const out: { node: LodNode; distance: number }[] = [];
   const visit = (n: LodNode, hint: RadiusHint | undefined): void => {
@@ -146,7 +156,8 @@ export function selectLeaves(
     if (n.level > 0 && belowHorizon(n, cam, params, built, hint)) return;
     const dist = nodeDistance(n, cam, params, built, hint);
     const edge = nodeArcLength(n.level, params.radius);
-    if (n.level < params.maxLevel && dist < params.splitFactor * edge) {
+    const canSplit = !progressive || n.level === 0 || built !== undefined;
+    if (n.level < params.maxLevel && dist < params.splitFactor * edge && canSplit) {
       const next = built ? { minR: built.minR, maxR: built.maxR } : hint;
       for (const c of children(n)) visit(c, next);
     } else {

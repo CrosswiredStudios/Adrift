@@ -69,6 +69,8 @@ export class InputSystem implements ActionState {
   pointerLocked = false;
   /** Set false to keep canvas clicks from grabbing the pointer (menus). */
   allowPointerLock = true;
+  /** Called when the pointer lock is released by the browser (e.g. Esc). */
+  onPointerLockLost: (() => void) | null = null;
 
   constructor(opts: InputSystemOptions = {}) {
     this.bindings = opts.bindings ?? defaultBindings();
@@ -122,9 +124,11 @@ export class InputSystem implements ActionState {
       canvas.addEventListener("click", onClick);
       this.disposers.push(() => canvas.removeEventListener("click", onClick));
       this.listen(win.document, "pointerlockchange", () => {
+        const was = this.pointerLocked;
         this.pointerLocked = win.document.pointerLockElement === canvas;
         this.mouseDX = 0;
         this.mouseDY = 0;
+        if (was && !this.pointerLocked) this.onPointerLockLost?.();
       });
     }
   }

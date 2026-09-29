@@ -4,7 +4,7 @@
  * fall back to seeded stand-ins and are reported in `fallbacks`.
  */
 import { Color3, DynamicTexture, Scene, Texture } from "@babylonjs/core";
-import { fbm3 } from "./noise";
+import { fbm } from "../terrain/noise";
 import { clamp01 } from "./math";
 
 export function configureTiledTexture(tex: Texture): void {
@@ -35,8 +35,8 @@ export function makeFallbackTexture(scene: Scene, name: string, tint: Color3, se
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const o = (y * size + x) * 4;
-      const coarse = fbm3(x * 0.045, y * 0.045, seed * 0.37, 4, seed) * 0.5 + 0.5;
-      const fine = fbm3(x * 0.31, y * 0.31, seed * 0.11, 2, seed + 5) * 0.5 + 0.5;
+      const coarse = fbm(x * 0.045, y * 0.045, seed * 0.37, 4, seed) * 0.5 + 0.5;
+      const fine = fbm(x * 0.31, y * 0.31, seed * 0.11, 2, seed + 5) * 0.5 + 0.5;
       const v = clamp01(coarse * 0.7 + fine * 0.3);
       const shade = 0.55 + v * 0.6;
       d[o] = Math.round(Math.min(1, tint.r * shade) * 255);

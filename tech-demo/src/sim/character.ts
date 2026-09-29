@@ -155,13 +155,10 @@ export class CharacterSim {
     if (!this.grounded && !this.swimming && ml < 0.05) dv.setAll(0);
     this.vel.addInPlace(dv);
 
-    // --- Gravity + frame pseudo-forces.
+    // --- Gravity + frame pseudo-forces (ground contact below cancels the
+    // inward part while standing).
     const g = bodyFrameAcceleration(env.mu, env.spinRate, this.pos, this.vel);
-    if (this.grounded) {
-      // Standing: only the tangential part of gravity matters (sliding on
-      // too-steep slopes is handled below); don't accumulate a fall speed.
-      this.vel.addInPlace(g.scale(dt));
-    } else this.vel.addInPlace(g.scale(dt));
+    this.vel.addInPlace(g.scale(dt));
 
     // --- Jump.
     if (c.jump && (this.grounded || this.swimming)) {

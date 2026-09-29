@@ -70,6 +70,31 @@ describe("ShipSim", () => {
     expect(ship.vel.length()).toBeLessThan(0.5);
   });
 
+  it("assist: holding down descends at a commanded rate and touches down gently", () => {
+    const e = env({ atmo: 900 });
+    const ship = new ShipSim();
+    ship.placeOnSurface(up, north, e);
+    ship.pos.y += 60;
+    ship.landed = false;
+    const c = emptyControls();
+    c.thrust.y = -0.5;
+    let impacts = 0;
+    let maxDescent = 0;
+    for (let i = 0; i < 60 * 30 && !ship.landed; i++) {
+      ship.step(1 / 60, c, e, { impact: () => impacts++ });
+      maxDescent = Math.max(maxDescent, -ship.verticalSpeed);
+    }
+    expect(ship.landed).toBe(true);
+    expect(maxDescent).toBeLessThan(11); // ~0.5 x 20 m/s command
+    expect(ship.hull).toBe(1);
+    expect(impacts).toBe(0);
+    // Releasing the stick on the ground doesn't lift it back into a hover.
+    c.thrust.y = 0;
+    run(ship, 3, e, c);
+    expect(ship.landed).toBe(true);
+    expect(ship.sleeping).toBe(true);
+  });
+
   it("without assist the ship falls (pure Newtonian)", () => {
     const e = env({ atmo: 900 });
     const ship = new ShipSim();

@@ -18,9 +18,6 @@ export interface VegetationLook {
   /** Shrub / weed cutouts. */
   plantsColor: string;
   plantsOpacity: string;
-  /** Grass tufts. */
-  firColor: string;
-  firOpacity: string;
   /** Tree instance cap (split between the two species by `broadleafRatio`). */
   trees: number;
   broadleafRatio: number;
@@ -78,8 +75,6 @@ export const defaultVegetationLook: VegetationLook = {
   needleOpacity: "/textures/vegetation/needles_opacity.jpg",
   plantsColor: "/textures/vegetation/plants_color.jpg",
   plantsOpacity: "/textures/vegetation/plants_opacity.jpg",
-  firColor: "/textures/vegetation/grass_color.jpg",
-  firOpacity: "/textures/vegetation/grass_opacity.jpg",
   trees: 3200,
   broadleafRatio: 0.72,
   shrubs: 2600,
@@ -103,10 +98,10 @@ export const defaultVegetationLook: VegetationLook = {
   treeHeight: 8.5,
   coniferHeight: 10,
   shrubHeight: 2.2,
-  grassHeight: 1.5,
+  grassHeight: 0.9,
   treeScale: [0.7, 1.35],
   shrubScale: [0.75, 1.5],
-  grassScale: [0.7, 1.6],
+  grassScale: [0.7, 1.3],
   broadleafTint: new Color3(1.0, 1.18, 0.85),
   coniferTint: new Color3(0.95, 1.12, 0.85),
   shrubTint: new Color3(1.0, 1.18, 0.85),

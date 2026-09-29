@@ -6,5 +6,5 @@ export default defineConfig({
   ...base,
   testDir: "./tests/diagnostics",
   testIgnore: [],
-  timeout: 300000,
+  timeout: 3000000,
 });

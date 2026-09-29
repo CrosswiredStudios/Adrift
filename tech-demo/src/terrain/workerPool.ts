@@ -56,10 +56,15 @@ export class TerrainWorkerPool {
 
   /** Send body shapes to every worker (must be called before other jobs). */
   init(job: Extract<JobRequest, { kind: "init" }>): void {
-    for (const s of this.slots) {
-      if (s.worker) s.worker.postMessage({ id: 0, job });
-      else runJob(job);
-    }
+    // The main thread also keeps the shapes (synchronous root chunks, fallback).
+    runJob(job);
+    for (const s of this.slots) if (s.worker) s.worker.postMessage({ id: 0, job });
+  }
+
+  /** Update the priority of a queued job (no-op if it already started). */
+  reprioritize(key: string, priority: number): void {
+    const p = this.queue.get(key);
+    if (p) p.priority = priority;
   }
 
   /** Queue (or re-prioritise) a job. Resolves with the worker's result. */

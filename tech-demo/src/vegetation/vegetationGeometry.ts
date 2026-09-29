@@ -103,7 +103,7 @@ export function addTrunk(
 export interface SpeciesGeometry {
   meshName: string;
   geo: GeoAccum;
-  material: "bark" | "plants" | "fir" | "canopy" | "needles";
+  material: "bark" | "plants" | "grass" | "canopy" | "needles";
 }
 
 export function buildBroadleafGeometry(look: VegetationLook): SpeciesGeometry[] {
@@ -216,5 +216,5 @@ export function buildGrassGeometry(look: VegetationLook): SpeciesGeometry[] {
       H * 0.9,
     );
   }
-  return [{ meshName: "grass", geo, material: "fir" }];
+  return [{ meshName: "grass", geo, material: "grass" }];
 }

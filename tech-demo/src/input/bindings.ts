@@ -123,7 +123,7 @@ export function defaultBindings(): BindingMap {
 }
 
 /** Human-readable label for a binding (pause-menu controls list). */
-export function describeBinding(b: ButtonBinding | AxisBinding): string {
+export function describeBinding(b: ButtonBinding | AxisBinding, posFirst = false): string {
   const k = (code: string): string =>
     code
       .replace(/^Key/, "")
@@ -138,10 +138,10 @@ export function describeBinding(b: ButtonBinding | AxisBinding): string {
     case "pad":
       return `Pad ${b.button}`;
     case "keys":
-      return `${k(b.neg)}/${k(b.pos)}`;
+      return posFirst ? `${k(b.pos)}/${k(b.neg)}` : `${k(b.neg)}/${k(b.pos)}`;
     case "padAxis":
       return `Stick ${b.axis}`;
     case "padButtons":
-      return `Pad ${b.neg}/${b.pos}`;
+      return posFirst ? `Pad ${b.pos}/${b.neg}` : `Pad ${b.neg}/${b.pos}`;
   }
 }

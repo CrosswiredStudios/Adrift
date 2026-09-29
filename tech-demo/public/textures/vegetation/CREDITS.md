@@ -10,8 +10,10 @@ All textures are from [ambientCG](https://ambientcg.com) and released under the
 | `canopy_color.jpg`, `canopy_opacity.jpg` | [LeafSet024](https://ambientcg.com/a/LeafSet024) | Color, Opacity (1K-JPG) |
 | `needles_color.jpg`, `needles_opacity.jpg` | [LeafSet019](https://ambientcg.com/a/LeafSet019) | Color, Opacity (1K-JPG) |
 | `plants_color.jpg`, `plants_opacity.jpg` | [Foliage003](https://ambientcg.com/a/Foliage003) | Color, Opacity (1K-JPG) |
-| `grass_color.jpg`, `grass_opacity.jpg` | [Foliage005](https://ambientcg.com/a/Foliage005) | Color, Opacity (1K-JPG) |
 
 Normal maps use the OpenGL (+Y up) convention, which matches Babylon.js.
 The opacity maps are grayscale (white = opaque); the vegetation shader reads
 their luminance as alpha (alpha-test cutout).
+
+Grass tufts are drawn procedurally at load time (`makeGrassTuft` in
+`src/vegetation/vegetationTextures.ts`); no texture file is needed.

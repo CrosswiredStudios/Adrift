@@ -14,8 +14,10 @@
  *    near a body, roll auto-levels to the local horizon;
  *  - near a surface (inside the atmosphere, or below the hover ceiling on
  *    airless bodies): thrusters cancel gravity and bleed off drift on any
- *    axis you aren't commanding, so the ship hovers like a drone and lands
- *    gently;
+ *    axis you aren't commanding, so the ship hovers like a drone. Lateral
+ *    and vertical input become *velocity* commands (the vertical one limited
+ *    close to the ground, so holding "down" lands gently); forward input
+ *    stays raw thrust so the ship can build real speed;
  *  - in space: no damping at all, so coasting and orbits work.
  * With assist off every input is a raw force/torque. "Match velocity" (X)
  * brakes to rest relative to the surface frame in either mode.
@@ -49,6 +51,10 @@ export interface ShipSpec {
   safeImpact: number;
   /** Assist hover ceiling above the surface on airless bodies (m). */
   hoverCeiling: number;
+  /** Assist velocity commands at full stick near a surface (m/s). */
+  assistSpeed: { lateral: number; up: number; down: number };
+  /** Below this height (ship origin above ground, m) an idle assisted hover settles onto the gear. */
+  touchdownHeight: number;
 }
 
 export const SKIFF: ShipSpec = {
@@ -69,6 +75,8 @@ export const SKIFF: ShipSpec = {
   ],
   safeImpact: 9,
   hoverCeiling: 1500,
+  assistSpeed: { lateral: 25, up: 30, down: 20 },
+  touchdownHeight: 2.4,
 };
 
 /** Per-step pilot input (from actions, an autopilot or a test). */
@@ -241,13 +249,28 @@ export class ShipSim {
     for (let k = 0; k < 3; k++) {
       const u = input[k];
       let a = 0;
-      if (Math.abs(u) > 0.05) {
+      const hovering = this.assist && nearSurface && !this.restingOnGround();
+      if (Math.abs(u) > 0.05 && hovering && k < 2) {
+        // Velocity command; descent slows near the ground (~0.6 m/s per m).
+        let vCmd =
+          k === 0 ? u * s.assistSpeed.lateral : u > 0 ? u * s.assistSpeed.up : u * s.assistSpeed.down;
+        if (k === 1 && vCmd < 0) vCmd = Math.max(vCmd, -Math.max(2.5, this.altitude * 0.6));
+        a = (vCmd - vl[k]) / 0.6 - gl[k];
+      } else if (Math.abs(u) > 0.05) {
         a = u > 0 ? u * maxPos[k] : u * maxNeg[k];
+        if (hovering) a -= gl[k];
       } else if (c.matchVelocity) {
         a = -vl[k] / 0.35 - gl[k];
-      } else if (this.assist && nearSurface && !this.restingOnGround()) {
-        // Hover + drift damping (drone feel).
+      } else if (hovering) {
+        // Hover + drift damping (drone feel). Just above the ground with no
+        // vertical input, let it settle onto the gear instead of hovering on
+        // a contact bounce.
         a = -gl[k] - vl[k] / 0.8;
+        if (this.altitude < s.touchdownHeight && Math.abs(input[1]) <= 0.05) {
+          const upLocal = up.applyRotationQuaternionToRef(t.qi, new Vector3());
+          const upK = k === 0 ? upLocal.x : k === 1 ? upLocal.y : upLocal.z;
+          a -= upK * 1.5; // ~1.5 m/s^2 net sink along the local vertical
+        }
       }
       a = clamp(a, -maxNeg[k], maxPos[k]);
       out[k] = a >= 0 ? a / maxPos[k] : a / -maxNeg[k];
