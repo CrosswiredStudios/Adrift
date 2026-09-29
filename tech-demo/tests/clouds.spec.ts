@@ -100,10 +100,24 @@ test("flying through the deck raises density and fog veil", async ({ page }) => 
     }
     park();
   }, dir);
-  const inside = await page.evaluate(() => ({
-    clouds: (window as any).__game.clouds(),
-    fog: (window as any).__game.scene.fogDensity,
-  }));
+  // Read atomically: re-park at the slab point and run a zero-dt tick so the
+  // obstruction sampler samples the camera here. The render loop re-parks the
+  // chase camera between evaluates, which would otherwise clobber the density
+  // back to ~0 before this read (a race the slower 3D raymarch exposes).
+  const inside = await page.evaluate((dd: number[]) => {
+    const g = (window as any).__game;
+    const deck = g.bodies[0].surface.cloudDeck;
+    const mid = (deck.bounds.innerR + deck.bounds.outerR) / 2;
+    const center = deck.center();
+    const V = center.constructor as new (x: number, y: number, z: number) => any;
+    const d = new V(dd[0], dd[1], dd[2]).normalize();
+    g.camera.position.copyFrom(center).addInPlace(d.scale(mid));
+    g.step(0);
+    return {
+      clouds: g.clouds(),
+      fog: g.scene.fogDensity,
+    };
+  }, dir);
   expect(inside.clouds.density).toBeGreaterThan(before.density);
   expect(inside.clouds.density).toBeGreaterThan(0.05);
   expect(inside.fog).toBeGreaterThan(0);

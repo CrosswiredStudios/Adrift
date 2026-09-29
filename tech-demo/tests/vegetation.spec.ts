@@ -173,10 +173,12 @@ test("vegetation screenshots: forest, coast, orbit", async ({ page }) => {
   const errors = collectErrors(page);
   await bootVegetated(page);
 
-  // Hide the cloud deck so the ground is readable in the close shots.
+  // Hide the cloud deck so the ground is readable in the close shots. The deck
+  // is a post-process now, so the mesh toggle alone leaves the raymarch running.
   await page.evaluate(() => {
     const g = (window as unknown as { __game: any }).__game;
     g.scene.getMeshByName("Vael Prime-clouds")?.setEnabled(false);
+    g.bodies[0].surface?.cloudDeck?.setTier("lite");
   });
 
   const targets = await page.evaluate(() => {

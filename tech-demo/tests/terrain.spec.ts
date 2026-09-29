@@ -104,10 +104,12 @@ test("terrain screenshots: orbit, range, cliff, blend mask", async ({ page }) =>
     { timeout: 30000 },
   );
 
-  // Hide the cloud deck so the ground is readable in the shots.
+  // Hide the cloud deck so the ground is readable in the shots. The deck is a
+  // post-process now, so the mesh toggle alone leaves the raymarch running.
   await page.evaluate(() => {
     const g = (window as unknown as { __game: any }).__game;
     g.scene.getMeshByName("Vael Prime-clouds")?.setEnabled(false);
+    g.bodies[0].surface?.cloudDeck?.setTier("lite");
   });
 
   // Find the brightest lowland (subsolar side), the tallest peak near it, and

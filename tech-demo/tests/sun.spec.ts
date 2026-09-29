@@ -21,6 +21,10 @@ const clearSkies = async (page: Page): Promise<void> => {
   await page.evaluate(() => {
     const g = (window as unknown as { __game: any }).__game;
     g.scene.getMeshByName("Vael Prime-clouds")?.setEnabled(false);
+    // The deck is a post-process now; the mesh toggle alone leaves the
+    // volumetric raymarch running (and slowing the render loop the chase
+    // camera settles in). Disable the volume too.
+    g.bodies[0].surface?.cloudDeck?.setTier("lite");
   });
 };
 

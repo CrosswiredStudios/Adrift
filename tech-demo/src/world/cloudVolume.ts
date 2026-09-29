@@ -1,5 +1,5 @@
 import { Constants } from "@babylonjs/core/Engines/constants";
-import { Camera, Color3, Effect, PostProcess, RawTexture, Scene, Vector3 } from "@babylonjs/core";
+import { Camera, Color3, Effect, PostProcess, RawTexture, RawTexture3D, Scene, Texture, Vector3 } from "@babylonjs/core";
 import type { DepthRenderer } from "@babylonjs/core";
 import { mulberry32 } from "../common/rng";
 
@@ -7,8 +7,9 @@ import { mulberry32 } from "../common/rng";
  * Screen-space volumetric clouds, ported from the Babylon playground demo
  * (#MAONNT#13): a weather-map shaped slab raymarched as a camera post-process
  * with depth-aware compositing, Beer-law light marching, and a spatial
- * YCoCg denoise pass. Procedural fallbacks (no network fetches) generate the
- * weather + volume noise from the planet seed so the deck is deterministic.
+ * YCoCg denoise pass. Loads the reference demo's pebbles.png weather map and
+ * a 32^3 volume noise texture (sampler3D); procedural fallbacks from the
+ * planet seed keep the deck deterministic and offline-safe on load failure.
  *
  * Why a post-process instead of the old shell mesh: the shell shaded one
  * surface point per pixel, so the deck was either invisible (alpha ~0 from
@@ -66,13 +67,14 @@ function registerShaders(): void {
   if (Effect.ShadersStore[`${SHADER_NAME}FragmentShader`]) return;
   Effect.ShadersStore[`${SHADER_NAME}FragmentShader`] = `
   precision highp float;
+  precision highp sampler3D;
 
   varying vec2 vUV;
 
   uniform sampler2D textureSampler;
   uniform sampler2D depthSampler;
   uniform sampler2D weatherSampler;
-  uniform sampler2D volumeNoiseSampler;
+  uniform sampler3D volumeNoiseSampler;
   uniform vec2 iResolution;
   uniform float iTime;
   uniform float cameraMinZ;
@@ -151,20 +153,7 @@ function registerShaders(): void {
     vec3 i = floor(x);
     vec3 f = fract(x);
     f = f * f * (3.0 - 2.0 * f);
-    // 2D atlas of 32 slices (8x4 grid): sample the two bracketing slices and
-    // lerp. The atlas is 256x128 texels, so one slice is 32x32.
-    vec2 sliceUv = (i.xy + f.xy + 0.5) / 32.0;
-    float slice = mod(i.z, 32.0);
-    float col = mod(slice, 8.0);
-    float row = floor(slice / 8.0);
-    float nextSlice = mod(slice + 1.0, 32.0);
-    float nextCol = mod(nextSlice, 8.0);
-    float nextRow = floor(nextSlice / 8.0);
-    vec2 uv0 = vec2((col * 32.0 + sliceUv.x * 32.0) / 256.0, (row * 32.0 + sliceUv.y * 32.0) / 128.0);
-    vec2 uv1 = vec2((nextCol * 32.0 + sliceUv.x * 32.0) / 256.0, (nextRow * 32.0 + sliceUv.y * 32.0) / 128.0);
-    float a = texture2D(volumeNoiseSampler, uv0).x;
-    float b = texture2D(volumeNoiseSampler, uv1).x;
-    return mix(a, b, f.z);
+    return texture(volumeNoiseSampler, (i + f + 0.5) / 32.0).x;
   }
 
   float fbm(vec3 p) {
@@ -512,8 +501,8 @@ export interface CloudVolume {
 }
 
 interface VolumeTextures {
-  weather: RawTexture;
-  volume: RawTexture;
+  weather: Texture;
+  volume: RawTexture3D;
 }
 
 /**
@@ -533,40 +522,53 @@ function getDepth(scene: Scene, camera: Camera): DepthRenderer {
   return depth;
 }
 
+function makeWeatherRaw(scene: Scene, seed: number): Texture {
+  const data = makeWeatherData(seed);
+  const tex = new RawTexture(
+    data,
+    128,
+    128,
+    Constants.TEXTUREFORMAT_RED,
+    scene,
+    false,
+    false,
+    Constants.TEXTURE_TRILINEAR_SAMPLINGMODE,
+    Constants.TEXTURETYPE_UNSIGNED_BYTE,
+  );
+  tex.name = "cloud-weather-fallback";
+  tex.wrapU = Constants.TEXTURE_WRAP_ADDRESSMODE;
+  tex.wrapV = Constants.TEXTURE_WRAP_ADDRESSMODE;
+  return tex;
+}
+
 function makeTextures(scene: Scene, seed: number): VolumeTextures {
-  const weatherData = makeWeatherData(seed);
-  const weather = new RawTexture(
-    weatherData,
-    128,
-    128,
-    Constants.TEXTUREFORMAT_RED,
+  // Weather: start with the procedural fallback, swap to pebbles.png on load.
+  const result: VolumeTextures = { weather: makeWeatherRaw(scene, seed), volume: null! };
+  const loaded = new Texture(
+    "/textures/clouds/pebbles.png",
     scene,
     false,
     false,
     Constants.TEXTURE_TRILINEAR_SAMPLINGMODE,
-    Constants.TEXTURETYPE_UNSIGNED_BYTE,
+    () => {
+      result.weather.dispose();
+      result.weather = loaded;
+      result.weather.wrapU = Constants.TEXTURE_WRAP_ADDRESSMODE;
+      result.weather.wrapV = Constants.TEXTURE_WRAP_ADDRESSMODE;
+    },
+    () => {
+      loaded.dispose();
+    },
   );
-  weather.name = "cloud-weather";
-  weather.wrapU = Constants.TEXTURE_WRAP_ADDRESSMODE;
-  weather.wrapV = Constants.TEXTURE_WRAP_ADDRESSMODE;
+  loaded.name = "cloud-weather";
+
+  // Volume: 32^3 single-channel noise as a true 3D texture (sampler3D).
   const volumeData = makeVolumeNoiseData(seed);
-  // 2D atlas of the 32 slices in an 8x4 grid (256x128 texels): WebGL1-class
-  // contexts (and SwiftShader) have no 3D sampler, so the shader lerps the
-  // two bracketing slices itself.
-  const atlas = new Uint8Array(256 * 128);
-  for (let slice = 0; slice < 32; slice++) {
-    const col = slice % 8;
-    const row = Math.floor(slice / 8);
-    for (let y = 0; y < 32; y++) {
-      for (let x = 0; x < 32; x++) {
-        atlas[(row * 32 + y) * 256 + (col * 32 + x)] = volumeData[(slice * 32 + y) * 32 + x];
-      }
-    }
-  }
-  const volume = new RawTexture(
-    atlas,
-    256,
-    128,
+  result.volume = new RawTexture3D(
+    volumeData,
+    32,
+    32,
+    32,
     Constants.TEXTUREFORMAT_RED,
     scene,
     false,
@@ -574,10 +576,58 @@ function makeTextures(scene: Scene, seed: number): VolumeTextures {
     Constants.TEXTURE_TRILINEAR_SAMPLINGMODE,
     Constants.TEXTURETYPE_UNSIGNED_BYTE,
   );
-  volume.name = "cloud-volume-noise";
-  volume.wrapU = Constants.TEXTURE_WRAP_ADDRESSMODE;
-  volume.wrapV = Constants.TEXTURE_WRAP_ADDRESSMODE;
-  return { weather, volume };
+  result.volume.name = "cloud-volume-noise";
+  result.volume.wrapU = Constants.TEXTURE_WRAP_ADDRESSMODE;
+  result.volume.wrapV = Constants.TEXTURE_WRAP_ADDRESSMODE;
+  result.volume.wrapR = Constants.TEXTURE_WRAP_ADDRESSMODE;
+  return result;
+}
+
+/**
+ * Fetch the reference demo's greyNoise3D.bin (Shadertoy volume: 20-byte
+ * "BIN\n" header + width/height/depth/channels int32s + raw bytes) and swap
+ * it in as the 3D noise texture. On any failure the procedural 32^3 volume
+ * created in makeTextures stays in place, so the deck keeps rendering.
+ */
+async function loadVolumeNoiseTexture(scene: Scene, result: VolumeTextures): Promise<void> {
+  try {
+    const response = await fetch("/textures/clouds/greyNoise3D.bin");
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    const buffer = await response.arrayBuffer();
+    const view = new DataView(buffer);
+    const signature = String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+    if (signature !== "BIN\n" && signature !== "BIN\0") throw new Error("Invalid Shadertoy volume header.");
+    const width = view.getInt32(4, true);
+    const height = view.getInt32(8, true);
+    const depth = view.getInt32(12, true);
+    const channels = view.getInt32(16, true);
+    if (width <= 0 || height <= 0 || depth <= 0 || channels !== 1) {
+      throw new Error(`Unsupported Shadertoy volume size ${width}x${height}x${depth}x${channels}.`);
+    }
+    const byteLength = width * height * depth * channels;
+    if (buffer.byteLength < 20 + byteLength) throw new Error("Shadertoy volume file is truncated.");
+    const data = new Uint8Array(buffer, 20, byteLength);
+    const next = new RawTexture3D(
+      data,
+      width,
+      height,
+      depth,
+      Constants.TEXTUREFORMAT_RED,
+      scene,
+      false,
+      false,
+      Constants.TEXTURE_TRILINEAR_SAMPLINGMODE,
+      Constants.TEXTURETYPE_UNSIGNED_BYTE,
+    );
+    next.name = "cloud-volume-noise";
+    next.wrapU = Constants.TEXTURE_WRAP_ADDRESSMODE;
+    next.wrapV = Constants.TEXTURE_WRAP_ADDRESSMODE;
+    next.wrapR = Constants.TEXTURE_WRAP_ADDRESSMODE;
+    result.volume.dispose();
+    result.volume = next;
+  } catch (error) {
+    console.error("Failed to load volumetric cloud noise texture; using procedural fallback.", error);
+  }
 }
 
 function defaultOptions(input: CloudVolumePartial & { center: Vector3; radius: number }): CloudVolumeOptions {
@@ -613,6 +663,7 @@ export function createCloudVolume(
   const options = defaultOptions(input);
   const depth = getDepth(scene, camera);
   const textures = makeTextures(scene, options.seed);
+  void loadVolumeNoiseTexture(scene, textures);
   // FreeCamera.getDirection uses the camera's rotation; the forward axis is
   // -Z in Babylon's left-handed view space.
   const forwardAxis = new Vector3(0, 0, -1);
