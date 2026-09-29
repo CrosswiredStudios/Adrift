@@ -62,7 +62,12 @@ export function createSceneTargets(scene: Scene, camera: Camera): SceneTargets {
   let filter: (m: AbstractMesh) => boolean = () => false;
   refraction.renderListPredicate = (m) => filter(m) && m.isEnabled();
   scene.customRenderTargets.push(refraction);
-  engine.onResizeObservable.add(() => refraction.resize(size()));
+  engine.onResizeObservable.add(() => {
+    refraction.resize(size());
+    // The depth map is created at the canvas size of the moment (it can be
+    // the 300x150 default before layout) and doesn't follow resizes by itself.
+    map.resize({ width: engine.getRenderWidth(), height: engine.getRenderHeight() });
+  });
 
   return {
     depthRenderer,

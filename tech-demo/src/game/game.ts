@@ -175,6 +175,9 @@ export class Game {
       preserveDrawingBuffer: true,
     });
     this.engine = engine;
+    // Size the drawing buffer to the laid-out canvas before any render target
+    // copies its size.
+    engine.resize();
     const scene = new Scene(engine);
     this.scene = scene;
     scene.clearColor = new Color4(0, 0, 0, 1);
