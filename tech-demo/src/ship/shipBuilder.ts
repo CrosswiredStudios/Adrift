@@ -19,6 +19,8 @@ export interface ShipRig {
   exhaust: ParticleSystem[];
   heatMat: StandardMaterial | null;
   setThrust: (amount: number) => void;
+  /** Lateral thrust -1..1 (+ = pushing right): fires the opposite wingtip jet. */
+  setSideThrust: (amount: number) => void;
   setHeat: (amount: number) => void;
   update: (dt: number) => void;
 }
@@ -213,6 +215,36 @@ export function buildShip(scene: Scene): ShipRig {
     exhaust.push(ps);
   }
 
+  // Wingtip side jets (RCS): short puffs blowing outward when strafing.
+  const sideJets: ParticleSystem[] = [];
+  for (const side of [-1, 1]) {
+    const tip = new Mesh(`ship-rcs-${side}`, scene);
+    tip.parent = root;
+    tip.position.set(side * 3.0, 0, -1.7);
+    tip.isPickable = false;
+    const ps = new ParticleSystem(`ship-rcs-${side}`, 120, scene);
+    ps.particleTexture = makeGlowTexture(scene, `rcs-tex-${side}`);
+    ps.emitter = tip;
+    ps.isLocal = true;
+    ps.particleEmitterType = new ConeParticleEmitter(0.1, Math.PI / 12);
+    ps.direction1 = new Vector3(side * 5, -0.3, -0.3);
+    ps.direction2 = new Vector3(side * 8, 0.3, 0.3);
+    ps.minEmitPower = 4;
+    ps.maxEmitPower = 7;
+    ps.minLifeTime = 0.1;
+    ps.maxLifeTime = 0.25;
+    ps.minSize = 0.2;
+    ps.maxSize = 0.55;
+    ps.emitRate = 0;
+    ps.blendMode = ParticleSystem.BLENDMODE_ADD;
+    ps.color1 = new Color3(0.75, 0.9, 1.0).toColor4(0.9);
+    ps.color2 = new Color3(0.4, 0.6, 1.0).toColor4(0.5);
+    ps.colorDead = new Color3(0.05, 0.1, 0.3).toColor4(0);
+    ps.gravity = new Vector3(0, 0, 0);
+    ps.start();
+    sideJets.push(ps);
+  }
+
   // Re-entry heat shell: transparent fresnel-ish overlay toggled by heat.
   const heatMat = glowMaterial(scene, "ship-heat", new Color3(1.0, 0.35, 0.08), 0.0);
   heatMat.alpha = 0.0;
@@ -248,6 +280,12 @@ export function buildShip(scene: Scene): ShipRig {
     for (const pl of engineLights) pl.intensity = thrust * 60;
     for (const ps of exhaust) ps.emitRate = thrust * 320;
   };
+  const setSideThrust = (amount: number): void => {
+    const a = Math.min(1, Math.max(-1, amount));
+    // Pushing right fires the left (-X) jet, and vice versa.
+    sideJets[0].emitRate = Math.max(0, a) * 260;
+    sideJets[1].emitRate = Math.max(0, -a) * 260;
+  };
   const setHeat = (amount: number): void => {
     const heat = Math.min(1, Math.max(0, amount));
     heatMat.alpha = heat * 0.55;
@@ -273,7 +311,7 @@ export function buildShip(scene: Scene): ShipRig {
 
   setThrust(0);
   setHeat(0);
-  return { root, engineGlow, engineLights, exhaust, heatMat, setThrust, setHeat, update };
+  return { root, engineGlow, engineLights, exhaust, heatMat, setThrust, setSideThrust, setHeat, update };
 }
 
 function makeGlowTexture(scene: Scene, name: string): Texture {

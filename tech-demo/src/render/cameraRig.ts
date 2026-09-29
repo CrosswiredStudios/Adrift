@@ -4,7 +4,7 @@
  * body rotation) and hands it to the Babylon camera as position + a full
  * rotation quaternion, so the view never depends on a world "up".
  *
- *  - chase:   behind and above the ship, damped, horizon-stable up.
+ *  - chase:   behind and above the ship on a boom that follows its attitude.
  *  - cockpit: at the pilot's eye, locked to the ship.
  *  - onFoot:  first-person at the player's eye.
  */
@@ -19,22 +19,23 @@ export interface CameraPose {
 }
 
 export class ChaseRig {
-  private readonly pos = new Vector3();
-  private readonly up = new Vector3(0, 1, 0);
+  /** Damped copy of the ship's attitude (body frame). */
+  private readonly att = Quaternion.Identity();
   private initialized = false;
   private fov = 62;
 
-  /** Snap next update (after teleports / mode switches). */
+  /** Snap next update (after teleports / mode switches / SOI changes). */
   reset(): void {
     this.initialized = false;
   }
 
-  /** Re-express the damped state in a new body frame (SOI change). */
-  transfer(map: (p: Vector3) => Vector3, mapDir: (d: Vector3) => Vector3): void {
-    this.pos.copyFrom(map(this.pos));
-    this.up.copyFrom(mapDir(this.up));
-  }
-
+  /**
+   * The camera rides on a boom fixed to a slightly lagged copy of the ship's
+   * attitude, so it sits the same distance behind the ship at any speed (no
+   * trailing along the velocity) and its up is the ship's up (no horizon
+   * lock that could flip when you point at a planet). Same feel on the
+   * ground and in space.
+   */
   update(
     dt: number,
     shipPos: Vector3,
@@ -43,35 +44,34 @@ export class ChaseRig {
     boosting: boolean,
     out: CameraPose,
   ): CameraPose {
-    const speed = shipVel.length();
-    const boom = 15 + Math.min(8, speed * 0.02);
-    const shipUp = new Vector3(0, 1, 0).applyRotationQuaternion(shipAtt);
-    const planetUp = shipPos.clone().normalize();
-    const back = new Vector3(0, 3.6, -boom).applyRotationQuaternion(shipAtt);
-    const want = shipPos.add(back);
     if (!this.initialized) {
-      this.pos.copyFrom(want);
-      this.up.copyFrom(Vector3.Lerp(planetUp, shipUp, 0.35).normalize());
+      this.att.copyFrom(shipAtt);
       this.initialized = true;
     }
-    const k = 1 - Math.exp(-7 * dt);
-    this.pos.addInPlace(want.subtract(this.pos).scaleInPlace(k));
-    // Keep the camera from dipping under the ship's local ground plane too far.
-    const upTarget = Vector3.Lerp(planetUp, shipUp, 0.35).normalize();
-    this.up.addInPlace(upTarget.subtract(this.up).scaleInPlace(1 - Math.exp(-5 * dt))).normalize();
-
-    const target = shipPos.add(shipVel.scale(0.02));
-    const fwd = target.subtract(this.pos).normalize();
-    const right = Vector3.Cross(this.up, fwd).normalize();
+    Quaternion.SlerpToRef(this.att, shipAtt, 1 - Math.exp(-8 * dt), this.att);
+    this.att.normalize();
+    const boom = CHASE_BOOM.applyRotationQuaternion(this.att);
+    out.position.copyFrom(shipPos).addInPlace(boom);
+    // Aim a little above the ship so it sits just below the centre of view.
+    const fwd = shipPos
+      .add(CHASE_AIM.applyRotationQuaternion(this.att))
+      .subtractInPlace(out.position)
+      .normalize();
+    const upHint = Vector3.Up().applyRotationQuaternion(this.att);
+    const right = Vector3.Cross(upHint, fwd).normalize();
     const up = Vector3.Cross(fwd, right).normalize();
-    out.position.copyFrom(this.pos);
     quatFromAxes(right, up, fwd, out.rotation);
-    const targetFov = 62 + Math.min(16, speed * 0.03) + (boosting ? 5 : 0);
+    const speed = shipVel.length();
+    const targetFov = 62 + Math.min(8, speed * 0.02) + (boosting ? 5 : 0);
     this.fov += (targetFov - this.fov) * (1 - Math.exp(-3 * dt));
     out.fov = (this.fov * Math.PI) / 180;
     return out;
   }
 }
+
+/** Chase boom (ship-local offset of the camera) and aim point. */
+export const CHASE_BOOM = new Vector3(0, 3.6, -15);
+const CHASE_AIM = new Vector3(0, 1.6, 20);
 
 /** Pilot's eye in ship-local coordinates. */
 export const COCKPIT_EYE = new Vector3(0, 0.62, 1.25);

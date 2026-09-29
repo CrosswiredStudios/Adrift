@@ -42,7 +42,19 @@ nudges, gravity always pulls and there is no speed limit.
   holding it creeps along that axis at about 6 m/s, so `X` + `C` is a
   controlled descent onto a landing spot.
 - **Landing mode** (`L`): keeps the belly pointed at the ground while
-  leaving the heading to you (`LANDING` on the HUD).
+  leaving the heading to you (`LANDING` on the HUD). It switches itself off
+  on touchdown and above 600 m, so it never fights you in space.
+
+The **motion display** (bottom right) shows your velocity relative to the
+ground along the ship's own axes: the pad plots sideways and up/down drift
+as a vector (rings at 1, 10 and 100 m/s), the tape shows forward/back
+speed, and the wedges light up with the thrusters on each axis. It turns
+green and reads `MATCHED` when you're at rest.
+
+Strafing fires the wingtip jets and the skiff leans a little into the
+push, springing back level when you let go. The chase camera rides on a
+boom behind the ship and turns with it, so it handles the same on the
+ground, in the air and in space.
 
 Vael's orbital speed at the surface is about 140 m/s.
 

@@ -189,6 +189,22 @@ describe("ShipSim", () => {
     expect(Vector3.Dot(ship.axis(Vector3.Up()), up)).toBeGreaterThan(0.995);
   });
 
+  it("landing mode switches itself off high up and on touchdown", () => {
+    const e = env({ atmo: 900 });
+    const ship = new ShipSim();
+    ship.pos.set(0, R + 800, 0);
+    ship.landingMode = true;
+    run(ship, 0.1, e);
+    expect(ship.landingMode).toBe(false);
+    ship.placeOnSurface(up, north, e);
+    ship.pos.y += 3;
+    ship.landed = false;
+    ship.landingMode = true;
+    run(ship, 3, e);
+    expect(ship.landed).toBe(true);
+    expect(ship.landingMode).toBe(false);
+  });
+
   it("assisted rotation stops when the stick is released", () => {
     const e = env();
     const ship = new ShipSim();

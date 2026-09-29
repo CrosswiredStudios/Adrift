@@ -1,9 +1,12 @@
 /**
  * Heads-up display (DOM overlay): telemetry, interaction prompt, toasts,
- * current objective, discovery lore card and the inventory/crafting panel. The game builds a plain `HudModel` each frame; this
+ * current objective, discovery lore card, the ship's motion display
+ * (ui/motionDisplay.ts) and the inventory/crafting panel. The game builds a plain `HudModel` each frame; this
  * module only formats it, so the HUD can be restyled or replaced without
  * touching game logic.
  */
+
+import { MotionDisplay, type MotionModel } from "./motionDisplay";
 
 export interface HudTarget {
   name: string;
@@ -36,6 +39,8 @@ export interface HudModel {
   prompt: string | null;
   objective: string | null;
   vitals?: { oxygen: number; power: number; health: number } | null;
+  /** Ship velocity per axis + thrust (ship mode). */
+  motion?: MotionModel;
 }
 
 export interface InventoryModel {
@@ -65,6 +70,7 @@ export class Hud {
   private readonly crosshair: HTMLElement;
   private readonly lore: HTMLElement;
   private readonly inventory: HTMLElement;
+  private readonly motion: MotionDisplay;
   private inventoryKey = "";
   private loreTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -81,6 +87,7 @@ export class Hud {
     this.crosshair = el(root, "div", "hud-crosshair");
     this.lore = el(root, "div", "hud-lore");
     this.inventory = el(root, "div", "hud-inventory");
+    this.motion = new MotionDisplay(root);
   }
 
   update(m: HudModel): void {
@@ -119,6 +126,9 @@ export class Hud {
     this.prompt.classList.toggle("visible", !!m.prompt);
     this.objective.textContent = m.objective ? `Objective: ${m.objective}` : "";
     this.crosshair.classList.toggle("visible", m.mode === "onFoot");
+    const showMotion = m.mode === "ship" && !!m.motion;
+    this.motion.setVisible(showMotion);
+    if (showMotion) this.motion.draw(m.motion!);
   }
 
   /** Discovery card: title + lore, fades after a while. */

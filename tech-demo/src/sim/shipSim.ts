@@ -16,7 +16,8 @@
  *  - match velocity (hold X): brake to rest relative to the ground and hold
  *    against gravity (that's how you hover); thrusting while holding it
  *    creeps along that axis at a few m/s (gentle landings);
- *  - landing mode (L): assisted rotation keeps the belly toward the ground.
+ *  - landing mode (L): assisted rotation keeps the belly toward the ground;
+ *    it switches off on touchdown or above 600 m.
  * With assist off rotation has momentum too.
  *
  * Axis conventions (ship local): +X right, +Y up, +Z forward (nose).
@@ -52,6 +53,8 @@ export interface ShipSpec {
   levelRate: number;
   /** Speed of thrust input while match velocity is held (m/s). */
   creepSpeed: number;
+  /** Landing mode switches off above this altitude (m). */
+  landingModeCeiling: number;
 }
 
 export const SKIFF: ShipSpec = {
@@ -74,6 +77,7 @@ export const SKIFF: ShipSpec = {
   spool: 0.15,
   levelRate: 3,
   creepSpeed: 6,
+  landingModeCeiling: 600,
 };
 
 /** Per-step pilot input (from actions, an autopilot or a test). */
@@ -200,7 +204,11 @@ export class ShipSim {
     }
     const sub = 2;
     const h = dt / sub;
+    const s0 = this.spec;
     for (let i = 0; i < sub; i++) this.substep(h, c, env, events);
+    // Landing mode is for landing: it switches itself off on touchdown and
+    // once you climb well clear of the ground (so it never fights you in space).
+    if (this.landingMode && (this.landed || this.altitude > s0.landingModeCeiling)) this.landingMode = false;
     // Rest: once settled on the gear with hands off, freeze the body (it is
     // static in the body-fixed frame) instead of letting contact jitter creep.
     if (this.landed && idle && !this.floating) {

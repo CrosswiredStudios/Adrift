@@ -18,7 +18,7 @@ world/     BodyView: everything drawn for one body, props, terrain materials
 ocean/     Gerstner wave set (CPU + GPU twins), ocean meshes/shaders
 vegetation/ instanced foliage streamed per terrain chunk
 ship/      ship mesh + FX
-ui/        HUD, pause menu (DOM)
+ui/        HUD (incl. the ship motion display), pause menu (DOM)
 debug/     window.__game automation surface for tests and the console
 ```
 
@@ -121,7 +121,11 @@ Pausing stops step 1 (the loop's accumulator is reset); tests use
   applies and there is no speed cap. Helpers: rotation assist (`T`, the stick
   sets a turn rate), match velocity (hold `X`: brake to rest and hold
   against gravity; thrust input then creeps at a capped speed) and landing
-  mode (`L`: rotation keeps the belly toward the ground). Contacts are
+  mode (`L`: rotation keeps the belly toward the ground; off on touchdown
+  or above 600 m). The strafe lean is visual only (`Game.renderFrame`), and
+  the chase camera (`render/cameraRig.ts`) follows a damped copy of the
+  ship's attitude at a fixed boom, so it behaves the same at any speed or
+  altitude. Contacts are
   sequential-impulse with friction; the ship floats; resting ships sleep.
 - `sim/character.ts`: capsule controller on the exact height field and static
   colliders, with swimming and slope limits.

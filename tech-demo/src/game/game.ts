@@ -118,6 +118,9 @@ export class VirtualStick {
   }
 }
 
+/** Visual bank into a full strafe (rad). */
+const STRAFE_LEAN = 0.2;
+
 const QUALITY_TIERS: SkyQuality[] = ["ultra", "high", "balanced", "lite"];
 /** Keyboard look rate on foot (rad/s). */
 const KEY_LOOK_RATE = 2.2;
@@ -151,6 +154,8 @@ export class Game {
   readonly mouseStick = new VirtualStick();
   paused = false;
   cameraMode: "chase" | "cockpit" = "chase";
+  /** Current visual strafe lean (rad). */
+  private lean = 0;
   qualityTier: SkyQuality = "ultra";
   selectedTarget = "tethys";
   readonly progression: Progression;
@@ -441,7 +446,9 @@ export class Game {
       c.jump = input.pressed("jump");
       c.sprint = input.button("sprint");
     }
+    const landingBefore = sim.ship.landingMode;
     sim.step(dt);
+    if (landingBefore && !sim.ship.landingMode) this.events.emit("toast", { text: "Landing mode off" });
     this.updateInteractionTarget();
   }
 
@@ -554,12 +561,18 @@ export class Game {
     const shipPos = Vector3.Lerp(this.prevShip.pos, sim.ship.pos, a);
     const shipAtt = Quaternion.Slerp(this.prevShip.att, sim.ship.att, a);
     const shipFrame = this.frames.get(shipBody)!;
+    // Visual lean into strafes (the physics attitude is untouched): the ship
+    // banks a few degrees toward the side it is pushed and springs back.
+    const piloting = sim.mode === "ship";
+    const lateral = piloting && !sim.ship.landed ? clamp(sim.ship.thrustOut.x, -1, 1) : 0;
+    this.lean += (lateral * STRAFE_LEAN - this.lean) * (1 - Math.exp(-6 * frameDt));
+    const visAtt = shipAtt.multiply(Quaternion.RotationAxis(Vector3.Forward(), -this.lean));
 
     // Camera pose in the focus body's frame.
     const focusId = sim.mode === "ship" ? shipBody : sim.playerBody.id;
     const focusFrame = this.frames.get(focusId)!;
     if (sim.mode === "ship") {
-      if (this.cameraMode === "cockpit") cockpitPose(shipPos, shipAtt, this.camPose);
+      if (this.cameraMode === "cockpit") cockpitPose(shipPos, visAtt, this.camPose);
       else {
         const boosting = sim.shipControls.boost && sim.shipControls.thrust.z > 0.3;
         this.chase.update(this.paused ? 0 : frameDt, shipPos, shipAtt, sim.ship.vel, boosting, this.camPose);
@@ -586,10 +599,10 @@ export class Game {
     }
     const shipI = pointToInertial(shipFrame, shipPos);
     this.shipRoot.position.copyFrom(shipI.subtract(camI));
-    this.shipRoot.rotationQuaternion!.copyFrom(shipFrame.rotation.multiply(shipAtt));
+    this.shipRoot.rotationQuaternion!.copyFrom(shipFrame.rotation.multiply(visAtt));
     const out = sim.ship.thrustOut;
-    const piloting = sim.mode === "ship";
     this.shipRig.setThrust(piloting ? Math.max(0, out.z) * 0.85 + Math.abs(out.y) * 0.25 + 0.1 : 0);
+    this.shipRig.setSideThrust(lateral);
     this.shipRig.setHeat(sim.ship.heat);
     this.shipRig.update(frameDt);
     const cockpit = piloting && this.cameraMode === "cockpit";
@@ -735,6 +748,8 @@ export class Game {
     } else if (sim.canExit()) prompt = "[F] Step out";
     if (sim.mode === "ship") {
       const vI = velocityToInertial(shipFrame, ship.pos, ship.vel).subtract(shipFrame.velocity);
+      // Ground-relative velocity in the ship's own axes (what match velocity zeroes).
+      const vL = ship.vel.applyRotationQuaternion(Quaternion.Inverse(ship.att));
       return {
         mode: "ship",
         bodyName: sim.shipBody.name,
@@ -753,6 +768,11 @@ export class Game {
         targets,
         prompt,
         objective: this.progression.objective,
+        motion: {
+          vel: [vL.x, vL.y, vL.z],
+          thrust: [ship.thrustOut.x, ship.thrustOut.y, ship.thrustOut.z],
+          relativeTo: sim.shipBody.name,
+        },
       };
     }
     const p = sim.player;

@@ -20,3 +20,6 @@ Thumbs.db
 # Local env
 .env
 .env.*
+
+# Git bundles used to hand over commits
+*.bundle
