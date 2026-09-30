@@ -62,6 +62,8 @@ export function patchDepthShaders(): boolean {
 export interface SceneTargets {
   depthRenderer: DepthRenderer;
   depth(): Texture;
+  /** Render pass of the depth map (for per-pass materials, see terrainDepth). */
+  depthRenderPassId: number;
   refraction: RenderTargetTexture;
   /** Which meshes the refraction target renders (host body's terrain). */
   setRefractionFilter(filter: (m: AbstractMesh) => boolean): void;
@@ -113,6 +115,7 @@ export function createSceneTargets(scene: Scene, camera: Camera): SceneTargets {
   return {
     depthRenderer,
     depth: () => map,
+    depthRenderPassId: map.renderPassId,
     refraction,
     setRefractionFilter: (f) => {
       filter = f;

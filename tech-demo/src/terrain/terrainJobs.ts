@@ -38,6 +38,9 @@ const contexts = new Map<string, ChunkContext>();
 /** Height-map encoding range (m): value = (h - BAKE_MIN) / BAKE_RANGE as 16 bit. */
 export const BAKE_MIN = -400;
 export const BAKE_RANGE = 800;
+/** Ocean depth height map size (equirectangular, 16-bit packed into R/G). */
+export const HEIGHT_BAKE_W = 2048;
+export const HEIGHT_BAKE_H = 1024;
 
 export function runJob(job: JobRequest): { result: JobResult; transfer: ArrayBuffer[] } {
   switch (job.kind) {
@@ -58,6 +61,7 @@ export function runJob(job: JobRequest): { result: JobResult; transfer: ArrayBuf
           data.colors.buffer as ArrayBuffer,
           data.morph.buffer as ArrayBuffer,
           data.morphNormals.buffer as ArrayBuffer,
+          data.morphColors.buffer as ArrayBuffer,
         ],
       };
     }

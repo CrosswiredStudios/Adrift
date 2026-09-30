@@ -82,7 +82,7 @@ test("Tethys orbits Vael on rails and stays tidally locked", async () => {
   });
   expect(res.r).toBeCloseTo(12000, 3);
   expect(res.quarterAngle).toBeCloseTo(Math.PI / 2, 3);
-  expect(res.period).toBeGreaterThan(1200);
+  expect(res.period).toBeGreaterThan(1200); // Kepler around Vael: ~22 min
   expect(res.faceNow).toBeCloseTo(1, 6);
   expect(res.faceLater).toBeCloseTo(1, 6);
   expectNoErrors(shared.errors());

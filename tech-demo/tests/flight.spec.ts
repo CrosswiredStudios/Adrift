@@ -185,10 +185,13 @@ test("SOI transfer preserves inertial position and velocity", async () => {
     return { switched, before, after };
   });
   expect(res.switched).toBeGreaterThan(0);
-  // One step apart: positions differ by v*dt (~2 m), velocities barely change.
-  const dp = Math.hypot(...res.after.pos.map((v: number, i: number) => v - res.before.pos[i]));
+  // One step apart: positions differ by v*dt (Vael alone moves ~13 m per step
+  // around the star), velocities barely change.
+  const dp = Math.hypot(
+    ...res.after.pos.map((v: number, i: number) => v - res.before.pos[i] - res.before.vel[i] / 60),
+  );
   const dv = Math.hypot(...res.after.vel.map((v: number, i: number) => v - res.before.vel[i]));
-  expect(dp).toBeLessThan(5);
+  expect(dp).toBeLessThan(1);
   expect(dv).toBeLessThan(1);
   expectNoErrors(shared.errors());
 });

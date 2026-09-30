@@ -86,13 +86,30 @@ export class WetSandPlugin extends MaterialPluginBase {
             float wet = smoothstep(wetEdge + 0.3 * wetWin, wetEdge - 0.7 * wetWin, wetAbove);
             float damp = smoothstep(wetEdge + 3.0 * wetWin, wetEdge, wetAbove) * 0.55;
             float moisture = clamp(max(wet, damp), 0.0, 1.0);
+            vec3 wetDry = surfaceAlbedo;
             surfaceAlbedo *= mix(1.0, 0.58, moisture);
+            // Backwash lace: thin bubble filaments stranded on the sand the
+            // sheet just uncovered. Only on exposed sand (never under the
+            // waterline, where it read as white blotches on the sea floor),
+            // fine-scaled, and tinted from the sand itself so dark sand gets
+            // a grey residue rather than paint-white patches.
+            float wetExposed = wetAbove - wetEdge;
             float wetPhase = swashPhaseA(vWetLocal, uWetTime, wetShallow);
             float backwash = smoothstep(0.2, -0.6, cos(wetPhase));
-            float laceNoise = waterNoise(vWetLocal * 6.0 + vec3(0.0, uWetTime * 0.08, 0.0));
-            float lace = backwash * (1.0 - smoothstep(0.0, 2.0 * wetWin, max(wetAbove - wetEdge, 0.0)))
-                       * smoothstep(0.45, 0.75, laceNoise);
-            surfaceAlbedo = mix(surfaceAlbedo, vec3(0.96, 0.97, 0.98), clamp(lace, 0.0, 0.85));
+            float laceBand = smoothstep(0.03, 0.1, wetExposed)
+                           * (1.0 - smoothstep(0.4 * wetWin, 2.0 * wetWin, wetExposed));
+            float laceDist = length(vEyePosition.xyz - vPositionW);
+            float laceFade = 1.0 - smoothstep(20.0, 55.0, laceDist);
+            float lace = 0.0;
+            if (backwash * laceBand * laceFade > 0.001) {
+              vec3 laceDrift = vec3(0.0, uWetTime * 0.05, 0.0);
+              float laceCover = smoothstep(0.35, 0.7, waterNoise(vWetLocal * 2.5 + laceDrift));
+              float laceRidge = 1.0 - abs(waterNoise(vWetLocal * 11.0 - laceDrift) * 2.0 - 1.0);
+              float laceLines = smoothstep(0.8, 0.96, laceRidge);
+              lace = backwash * laceBand * laceFade * laceCover * laceLines;
+            }
+            vec3 laceCol = min(wetDry * 1.45 + vec3(0.12), vec3(0.92));
+            surfaceAlbedo = mix(surfaceAlbedo, laceCol, clamp(lace, 0.0, 0.6));
           }`,
       };
     }

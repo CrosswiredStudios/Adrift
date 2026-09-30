@@ -26,7 +26,9 @@ import {
   loadTerrainTextures,
   type TerrainHandle,
 } from "./terrainMaterial";
+import { createTerrainDepthMaterial } from "./terrainDepth";
 import { attachWetSand, type WetSandPlugin } from "./wetSand";
+import { HEIGHT_BAKE_H, HEIGHT_BAKE_W } from "../terrain/terrainJobs";
 import { createOcean, type OceanResult } from "../ocean/ocean";
 import { VegetationView } from "../vegetation/vegetationView";
 import { createStarVisual, type StarVisual } from "./star";
@@ -113,7 +115,18 @@ export class BodyView {
     if (waves && sea !== null) {
       this.wetSand = attachWetSand(mat, { swash: waves.swash, seaLevel: sea, radius: shape.radius });
     }
-    this.terrain = new TerrainView({ scene, bodyId: def.id, shape, root: this.root, material: mat, pool });
+    this.terrain = new TerrainView({
+      scene,
+      bodyId: def.id,
+      shape,
+      root: this.root,
+      material: mat,
+      pool,
+      depthPass: {
+        renderPassId: targets.depthRenderPassId,
+        material: createTerrainDepthMaterial(scene, def.id, shape.radius, sea),
+      },
+    });
 
     if (def.ocean && sea !== null) {
       const palette: SkyPalette = def.atmosphere
@@ -153,8 +166,8 @@ export class BodyView {
       });
       // Terrain height map for water depth / shore direction: baked by the
       // workers in strips (low priority, after the terrain around the camera).
-      const W = 2048;
-      const H = 1024;
+      const W = HEIGHT_BAKE_W;
+      const H = HEIGHT_BAKE_H;
       const STRIP = 32;
       const pixels = new Uint8Array(W * H * 4);
       let remaining = H / STRIP;
@@ -176,7 +189,10 @@ export class BodyView {
                 scene,
                 false,
                 false,
-                Texture.BILINEAR_SAMPLINGMODE,
+                // Nearest: the height is 16-bit packed into R/G, which can't be
+                // hardware-filtered (the low byte wraps); the ocean shader
+                // decodes four texels and interpolates the heights itself.
+                Texture.NEAREST_SAMPLINGMODE,
               );
               tex.name = `${def.id}-heightmap`;
               tex.wrapU = Texture.WRAP_ADDRESSMODE;

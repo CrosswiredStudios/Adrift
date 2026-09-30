@@ -24,7 +24,8 @@ export type ButtonAction =
   | "target2"
   | "target3"
   | "target4"
-  | "cameraToggle";
+  | "cameraToggle"
+  | "orbitLines";
 
 /** Analog actions in [-1, 1] (keys give -1/0/+1; sticks and mouse are analog). */
 export type AxisAction =
@@ -79,6 +80,7 @@ export function defaultBindings(): BindingMap {
       target3: [key("Digit3")],
       target4: [key("Digit4")],
       cameraToggle: [key("KeyV"), pad(11)],
+      orbitLines: [key("KeyO")],
     },
     axes: {
       thrustZ: [

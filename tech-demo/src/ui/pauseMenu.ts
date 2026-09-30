@@ -36,6 +36,7 @@ const CONTROL_ROWS: { label: string; axes?: AxisAction[]; buttons?: ButtonAction
   { label: "Inventory", buttons: ["inventory"] },
   { label: "Targets", buttons: ["target1", "target2", "target3", "target4"] },
   { label: "Camera", buttons: ["cameraToggle"] },
+  { label: "Orbit lines", buttons: ["orbitLines"] },
   { label: "Quality tier", buttons: ["quality"] },
   { label: "Pause", buttons: ["pause"] },
 ];

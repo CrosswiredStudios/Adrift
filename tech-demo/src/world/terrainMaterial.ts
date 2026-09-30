@@ -21,7 +21,11 @@
 import { Color3, Material, MaterialPluginBase, Scene, Texture, UniformBuffer } from "@babylonjs/core";
 import { glslNum } from "../common/shaderChunks";
 import { PluginRegistry } from "../common/materialPlugin";
-import { TERRAIN_MORPH_KIND, TERRAIN_MORPH_NORMAL_KIND } from "../terrain/chunkBuilder";
+import {
+  TERRAIN_MORPH_COLOR_KIND,
+  TERRAIN_MORPH_KIND,
+  TERRAIN_MORPH_NORMAL_KIND,
+} from "../terrain/chunkBuilder";
 import {
   configureTiledTexture,
   loadWithFallback,
@@ -131,6 +135,41 @@ export function loadTerrainTextures(scene: Scene, name: string, look: TerrainLoo
   return out;
 }
 
+/**
+ * Vertex warp shared by the colour pass and the depth pass (terrainDepth):
+ * geomorph toward the parent chunk's surface with distance (the camera is
+ * always at the render origin) and, on ocean worlds, sink distant shallows
+ * under the sea. Operates on `positionUpdated` with the `world` matrix and
+ * the geomorph attribute; declares `tMorphK` (the morph factor).
+ */
+export function terrainWarpGLSL(radius: number, seaLevel: number | null): string {
+  return `
+          float tMorphK = 0.0;
+          if (${TERRAIN_MORPH_KIND}.w > 0.0) {
+            float tMorphD = length((world * vec4(positionUpdated, 1.0)).xyz);
+            tMorphK = smoothstep(0.55 * ${TERRAIN_MORPH_KIND}.w, 0.9 * ${TERRAIN_MORPH_KIND}.w, tMorphD);
+          }
+          positionUpdated += ${TERRAIN_MORPH_KIND}.xyz * tMorphK;${
+            seaLevel !== null
+              ? `
+          // Far away, coarse chunks interpolate the seabed/shore between widely
+          // spaced vertices and can poke up through the (smooth) sea surface.
+          // Sink ground that is within a distance-scaled band of sea level so
+          // it stays under the water; high ground is untouched.
+          {
+            float tSeaR = ${glslNum(radius + seaLevel)};
+            float tR = length(positionUpdated);
+            float tDist = length((world * vec4(positionUpdated, 1.0)).xyz);
+            float tBand = clamp(tDist * 0.012 - 2.0, 0.0, 40.0);
+            if (tBand > 0.0) {
+              float tSink = tBand * (1.0 - smoothstep(tSeaR, tSeaR + tBand, tR));
+              positionUpdated *= (tR - tSink) / tR;
+            }
+          }`
+              : ""
+          }`;
+}
+
 class TerrainPlugin extends MaterialPluginBase {
   public uTerrainDebug = 0;
 
@@ -145,7 +184,7 @@ class TerrainPlugin extends MaterialPluginBase {
   }
 
   public override getAttributes(attributes: string[]): void {
-    attributes.push(TERRAIN_MORPH_KIND, TERRAIN_MORPH_NORMAL_KIND);
+    attributes.push(TERRAIN_MORPH_KIND, TERRAIN_MORPH_NORMAL_KIND, TERRAIN_MORPH_COLOR_KIND);
   }
 
   public override getSamplers(samplers: string[]): void {
@@ -181,6 +220,7 @@ class TerrainPlugin extends MaterialPluginBase {
         CUSTOM_VERTEX_DEFINITIONS: `
           attribute vec4 ${TERRAIN_MORPH_KIND};
           attribute vec3 ${TERRAIN_MORPH_NORMAL_KIND};
+          attribute vec3 ${TERRAIN_MORPH_COLOR_KIND};
           varying vec3 vTerrainLocal;
           varying vec3 vTerrainNormalL;
           varying vec3 vTerrainAxisX;
@@ -188,34 +228,14 @@ class TerrainPlugin extends MaterialPluginBase {
           varying vec3 vTerrainAxisZ;`,
         // Geomorph toward the parent chunk's surface with distance (the
         // camera is always at the render origin).
-        CUSTOM_VERTEX_UPDATE_POSITION: `
-          float tMorphK = 0.0;
-          if (${TERRAIN_MORPH_KIND}.w > 0.0) {
-            float tMorphD = length((world * vec4(positionUpdated, 1.0)).xyz);
-            tMorphK = smoothstep(0.55 * ${TERRAIN_MORPH_KIND}.w, 0.9 * ${TERRAIN_MORPH_KIND}.w, tMorphD);
-          }
-          positionUpdated += ${TERRAIN_MORPH_KIND}.xyz * tMorphK;${
-            cfg.seaLevel !== null
-              ? `
-          // Far away, coarse chunks interpolate the seabed/shore between widely
-          // spaced vertices and can poke up through the (smooth) sea surface.
-          // Sink ground that is within a distance-scaled band of sea level so
-          // it stays under the water; high ground is untouched.
-          {
-            float tSeaR = ${glslNum(cfg.radius + cfg.seaLevel)};
-            float tR = length(positionUpdated);
-            float tDist = length((world * vec4(positionUpdated, 1.0)).xyz);
-            float tBand = clamp(tDist * 0.012 - 2.0, 0.0, 40.0);
-            if (tBand > 0.0) {
-              float tSink = tBand * (1.0 - smoothstep(tSeaR, tSeaR + tBand, tR));
-              positionUpdated *= (tR - tSink) / tR;
-            }
-          }`
-              : ""
-          }`,
+        CUSTOM_VERTEX_UPDATE_POSITION: terrainWarpGLSL(cfg.radius, cfg.seaLevel),
         CUSTOM_VERTEX_UPDATE_NORMAL: `
           normalUpdated = normalize(normalUpdated + ${TERRAIN_MORPH_NORMAL_KIND} * tMorphK);`,
         CUSTOM_VERTEX_MAIN_END: `
+          // Biome tint morphs with the shape (see chunkBuilder).
+          #ifdef VERTEXCOLOR
+          vColor.rgb += ${TERRAIN_MORPH_COLOR_KIND} * tMorphK;
+          #endif
           vTerrainLocal = positionUpdated;
           vTerrainNormalL = normalize(normalUpdated);
           // Body -> world rotation (chunks are unscaled children of the body root).

@@ -58,7 +58,7 @@ describe("cube sphere", () => {
       const [ax, ay, az] = f.a;
       const [bx, by, bz] = f.b;
       const c = [ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx];
-      expect(c).toEqual(f.n.map((v) => v + 0)); // -0 safe compare
+      expect(c.map((v) => v + 0)).toEqual(f.n.map((v) => v + 0)); // -0 safe compare
     }
   });
 
@@ -220,6 +220,53 @@ describe("chunk builder", () => {
     // Level-0 chunks have nothing to morph to.
     const root = buildChunk({ bodyId: "vael", face: 0, level: 0, x: 0, y: 0 }, ctx, "r");
     expect(root.morph.every((v) => v === 0)).toBe(true);
+    expect(root.morphNormals.every((v) => v === 0)).toBe(true);
+    expect(root.morphColors.every((v) => v === 0)).toBe(true);
+  });
+
+  it("geomorphed normals and colours match what the parent shows (no shading pop)", () => {
+    const V = GRID + 1;
+    // A rugged spot so parent and child normals really differ.
+    const parent = buildChunk({ bodyId: "vael", face: 1, level: 6, x: 20, y: 41 }, ctx, "p");
+    const child = buildChunk({ bodyId: "vael", face: 1, level: 7, x: 41, y: 82 }, ctx, "c");
+    const pN = (i: number, j: number, k: number) => parent.normals[(j * V + i) * 3 + k];
+    const pC = (i: number, j: number, k: number) => parent.colors[(j * V + i) * 4 + k];
+    const endpoints = (i: number, j: number): [number, number][] => {
+      const pi = GRID / 2 + i / 2;
+      const pj = j / 2;
+      if (i % 2 === 0 && j % 2 === 0) return [[pi, pj]];
+      if (i % 2 === 1 && j % 2 === 0)
+        return [
+          [pi - 0.5, pj],
+          [pi + 0.5, pj],
+        ];
+      if (i % 2 === 0)
+        return [
+          [pi, pj - 0.5],
+          [pi, pj + 0.5],
+        ];
+      return [
+        [pi + 0.5, pj - 0.5],
+        [pi - 0.5, pj + 0.5],
+      ];
+    };
+    let maxOwnDiff = 0;
+    for (let j = 0; j < V; j++)
+      for (let i = 0; i < V; i++) {
+        const o = j * V + i;
+        const ends = endpoints(i, j);
+        const wantN = [0, 1, 2].map((k) => ends.reduce((a, [x, y]) => a + pN(x, y, k), 0));
+        const l = Math.hypot(wantN[0], wantN[1], wantN[2]);
+        for (let k = 0; k < 3; k++) {
+          const gotN = child.normals[o * 3 + k] + child.morphNormals[o * 3 + k];
+          expect(gotN).toBeCloseTo(wantN[k] / l, 4);
+          const wantC = ends.reduce((a, [x, y]) => a + pC(x, y, k), 0) / ends.length;
+          expect(child.colors[o * 4 + k] + child.morphColors[o * 3 + k]).toBeCloseTo(wantC, 4);
+          maxOwnDiff = Math.max(maxOwnDiff, Math.abs(child.normals[o * 3 + k] - wantN[k] / l));
+        }
+      }
+    // Sanity: the child's own normals do differ from the parent's here.
+    expect(maxOwnDiff).toBeGreaterThan(1e-3);
   });
 });
 

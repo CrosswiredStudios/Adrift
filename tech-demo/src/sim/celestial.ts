@@ -17,7 +17,8 @@
  *
  * Patched conics: the ship only feels the gravity of the body whose sphere
  * of influence (SOI) it is in. SOI radius follows Laplace:
- * r = a * (mu / mu_parent)^(2/5).
+ * r = a * (mu / mu_parent)^(2/5), unless a body sets `soi` explicitly (a
+ * heavy star makes Laplace spheres too small to hold a planet's moons).
  */
 import { Quaternion, Vector3 } from "@babylonjs/core";
 
@@ -58,6 +59,8 @@ export interface BodySpec {
   mu: number;
   orbit?: OrbitSpec;
   spin: SpinSpec;
+  /** Explicit sphere-of-influence radius (m); default Laplace. */
+  soi?: number;
 }
 
 const TAU = Math.PI * 2;
@@ -107,7 +110,7 @@ export class CelestialBody {
     if (parent && o) {
       parent.children.push(this);
       this.orbitPeriod = o.period ?? TAU * Math.sqrt(o.radius ** 3 / parent.mu);
-      this.soi = o.radius * Math.pow(this.mu / parent.mu, 0.4);
+      this.soi = this.spec.soi ?? o.radius * Math.pow(this.mu / parent.mu, 0.4);
       const inc = o.inclination ?? 0;
       const node = o.node ?? 0;
       // Ascending node direction in the XZ plane, then tilt the plane about it.
@@ -142,6 +145,21 @@ export class CelestialBody {
   orbitAngle(t: number): number {
     if (!this.orbitPeriod) return 0;
     return (this.spec.orbit?.phase ?? 0) + (TAU * t) / this.orbitPeriod;
+  }
+
+  /**
+   * Point on the orbit path at orbit angle `angle`, relative to the parent's
+   * centre, in inertial axes (for drawing orbit lines).
+   */
+  orbitPoint(angle: number, out = new Vector3()): Vector3 {
+    const a = this.spec.orbit?.radius ?? 0;
+    const c = Math.cos(angle) * a;
+    const s = Math.sin(angle) * a;
+    return out.set(
+      this.e1.x * c + this.e2.x * s,
+      this.e1.y * c + this.e2.y * s,
+      this.e1.z * c + this.e2.z * s,
+    );
   }
 
   /** Inertial position at time t. */

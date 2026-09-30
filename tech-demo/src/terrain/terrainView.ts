@@ -8,8 +8,22 @@
  * budgeted per frame so a burst of finished chunks can't cause a hitch.
  */
 import { Material, Mesh, Scene, TransformNode, VertexBuffer } from "@babylonjs/core";
-import { selectLeaves, resolveDrawSet, roots, type ChunkBoundsInfo, type LodParams } from "./quadtree";
-import { chunkIndices, TERRAIN_MORPH_KIND, TERRAIN_MORPH_NORMAL_KIND, type ChunkData } from "./chunkBuilder";
+import {
+  selectLeaves,
+  resolveDrawSet,
+  roots,
+  parentOf,
+  type ChunkBoundsInfo,
+  type LodNode,
+  type LodParams,
+} from "./quadtree";
+import {
+  chunkIndices,
+  TERRAIN_MORPH_COLOR_KIND,
+  TERRAIN_MORPH_KIND,
+  TERRAIN_MORPH_NORMAL_KIND,
+  type ChunkData,
+} from "./chunkBuilder";
 import { nodeKey, levelForSpacing, nodeArcLength } from "./cubeSphere";
 import { GRID } from "./chunkBuilder";
 import { CancelledError, type TerrainWorkerPool } from "./workerPool";
@@ -33,6 +47,11 @@ export interface TerrainViewOptions {
   /** Target vertex spacing at the finest level (m). */
   leafSpacing?: number;
   splitFactor?: number;
+  /**
+   * Material to draw chunks with in another render pass (the scene depth
+   * map), so that pass sees the same geomorphed surface as the colour pass.
+   */
+  depthPass?: { renderPassId: number; material: Material };
 }
 
 export interface TerrainStats {
@@ -130,10 +149,17 @@ export class TerrainView {
       c.mesh.setEnabled(this.visible);
       c.lastUsed = now;
     }
-    // Ancestors of drawn/wanted nodes stay warm (they are the fallbacks).
-    for (const key of wanted) {
-      const c = this.chunks.get(key);
-      if (c) c.lastUsed = now;
+    // Wanted leaves and every ancestor of them stay warm: the ancestors are
+    // both the fallbacks and the path progressive refinement walks down, so
+    // evicting one collapses its whole region to a coarse level for a
+    // moment (which read as a periodic flicker/pop while flying).
+    for (const { node } of leaves) {
+      let n: LodNode | null = node;
+      while (n) {
+        const c = this.chunks.get(this.fullKey(n.key));
+        if (c) c.lastUsed = now;
+        n = parentOf(n);
+      }
     }
     this.drawn = drawKeys;
     this.evict(now);
@@ -176,8 +202,11 @@ export class TerrainView {
     }
     mesh.setVerticesData(TERRAIN_MORPH_KIND, data.morph, false, 4);
     mesh.setVerticesData(TERRAIN_MORPH_NORMAL_KIND, data.morphNormals, false, 3);
+    mesh.setVerticesData(TERRAIN_MORPH_COLOR_KIND, data.morphColors, false, 3);
     mesh.setIndices(chunkIndices());
     mesh.material = this.o.material;
+    if (this.o.depthPass)
+      mesh.setMaterialForRenderPass(this.o.depthPass.renderPassId, this.o.depthPass.material);
     mesh.parent = this.o.root;
     mesh.isPickable = false;
     mesh.hasVertexAlpha = false;

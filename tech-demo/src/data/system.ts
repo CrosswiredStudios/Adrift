@@ -6,14 +6,23 @@
  * flights all fit in minutes of play, while gravity, orbits and day/night
  * still follow real physics:
  *
- *   body     radius   surface g   orbit              day
- *   Vesper   8 km     (star)      -                  -
- *   Vael     2 km     9.81 m/s2   300 km, 6 h year   20 min
- *   Tethys   600 m    1.62 m/s2   12 km around Vael  tidally locked (~22 min)
- *   Cinder   1.5 km   7.4 m/s2    480 km             30 min
+ *   body     radius   surface g   orbit                   solar day
+ *   Vesper   8 km     (star)      -                       -
+ *   Vael     2 km     9.81 m/s2   300 km, 40 min year     20 min
+ *   Tethys   600 m    1.62 m/s2   12 km around Vael, 22 min  tidally locked
+ *   Cinder   1.5 km   7.4 m/s2    480 km, ~81 min year    30 min
  *
  * Orbits and spins are on rails (see sim/celestial.ts). Visual and terrain
  * parameters live alongside so a new planet is one entry here.
+ *
+ * Years are short so the planets visibly move during play. The star's mu is
+ * set by Vael's year (Kepler III), so orbits stay physical: a ship that
+ * drifts off a planet stays in orbit near it instead of flying out of the
+ * system. That makes the star heavy, which would shrink Laplace spheres of
+ * influence below Tethys's orbit, so Vael sets its SOI explicitly. Tethys's
+ * period follows from Vael's gravity (9.81 m/s2 at 2 km), so it keeps ~22 min.
+ * Spin periods are sidereal, derived from the solar day each planet should
+ * have (`siderealDay`), so day/night pacing doesn't change with the year.
  *
  * Names: "Vesper" (star) and "Cinder" (second planet) are working names;
  * the design docs list the second planet as "Cinder / Pelagos (undecided)".
@@ -23,6 +32,16 @@ import type { BodySpec } from "../sim/celestial";
 import { defaultShores, type TerrainShape } from "../terrain/heightField";
 
 const G = (radius: number, g: number): number => g * radius * radius;
+
+/** Sidereal spin period giving a `solarDay` for a prograde spin on an orbit of period `year`. */
+export const siderealDay = (solarDay: number, year: number): number => 1 / (1 / solarDay + 1 / year);
+
+/** Vael's orbital period around Vesper (s). Sets the star's mass. */
+export const VAEL_YEAR = 2400;
+const VAEL_ORBIT = 300000;
+const CINDER_ORBIT = 480000;
+const VESPER_MU = (4 * Math.PI * Math.PI * VAEL_ORBIT ** 3) / VAEL_YEAR ** 2;
+const CINDER_YEAR = 2 * Math.PI * Math.sqrt(CINDER_ORBIT ** 3 / VESPER_MU);
 
 export interface AtmosphereSpec {
   /** Height of the top of the atmosphere above the mean radius (m). */
@@ -94,8 +113,8 @@ export const VESPER_DRIFT: BodyDef[] = [
     name: "Vesper",
     kind: "star",
     radius: 8000,
-    // Vael's 300 km orbit takes 6 hours: mu = 4 pi^2 a^3 / T^2.
-    mu: (4 * Math.PI * Math.PI * 300000 ** 3) / 21600 ** 2,
+    // Vael's 300 km orbit takes VAEL_YEAR: mu = 4 pi^2 a^3 / T^2.
+    mu: VESPER_MU,
     spin: { period: 0 },
     star: { color: new Color3(1.0, 0.93, 0.82), intensity: 3.0 },
   },
@@ -105,8 +124,10 @@ export const VESPER_DRIFT: BodyDef[] = [
     kind: "planet",
     radius: 2000,
     mu: G(2000, 9.81),
-    orbit: { parent: "vesper", radius: 300000, phase: 0 },
-    spin: { period: 1200, tilt: 0.21, tiltAzimuth: 0.4, phase: 0.5 },
+    orbit: { parent: "vesper", radius: VAEL_ORBIT, phase: 0 },
+    // Laplace would give ~10 km around the heavy star; Tethys orbits at 12 km.
+    soi: 20000,
+    spin: { period: siderealDay(1200, VAEL_YEAR), tilt: 0.21, tiltAzimuth: 0.4, phase: 0.5 },
     terrain: {
       seed: 1337,
       radius: 2000,
@@ -135,8 +156,11 @@ export const VESPER_DRIFT: BodyDef[] = [
       rayleighColor: new Color3(0.175, 0.41, 1.0),
       rayleighStrength: 1.0,
       mieColor: new Color3(1.0, 0.97, 0.92),
-      mieStrength: 1.0,
-      mieG: 0.76,
+      // Thin, forward-peaked haze: keeps the sunset aureole tight around the
+      // sun instead of a huge white disc (this small planet barely dims or
+      // reddens low sunlight, so a broad Mie lobe washes out the sky).
+      mieStrength: 0.6,
+      mieG: 0.9,
       drag: 1,
     },
     ocean: {
@@ -189,8 +213,8 @@ export const VESPER_DRIFT: BodyDef[] = [
     kind: "planet",
     radius: 1500,
     mu: G(1500, 7.4),
-    orbit: { parent: "vesper", radius: 480000, phase: 0.9, inclination: 0.03, node: 1.2 },
-    spin: { period: 1800, tilt: 0.4, tiltAzimuth: 2.0 },
+    orbit: { parent: "vesper", radius: CINDER_ORBIT, phase: 0.9, inclination: 0.03, node: 1.2 },
+    spin: { period: siderealDay(1800, CINDER_YEAR), tilt: 0.4, tiltAzimuth: 2.0 },
     terrain: {
       seed: 4242,
       radius: 1500,

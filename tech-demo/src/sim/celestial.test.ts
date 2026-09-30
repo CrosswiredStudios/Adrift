@@ -36,6 +36,15 @@ describe("CelestialSystem", () => {
     expect(planet.surfaceGravity).toBeCloseTo(9.81, 2);
   });
 
+  it("honours an explicit SOI and traces the orbit path", () => {
+    const custom = new CelestialSystem(specs.map((s) => (s.id === "planet" ? { ...s, soi: 42000 } : s)));
+    const p = custom.get("planet");
+    expect(p.soi).toBe(42000);
+    const t = 777;
+    const rel = p.positionAt(t).subtract(custom.root.positionAt(t));
+    expect(Vector3.Distance(p.orbitPoint(p.orbitAngle(t)), rel)).toBeLessThan(1e-6);
+  });
+
   it("keeps orbits circular and velocity consistent with position", () => {
     const p = new Vector3();
     const pp = new Vector3();

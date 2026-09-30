@@ -53,10 +53,11 @@ import { buildShip, type ShipRig } from "../ship/shipBuilder";
 import { createSplash } from "../ship/shipFx";
 import { createSceneTargets, type SceneTargets } from "../render/sceneTargets";
 import { PlanetaryPass, type SkyQuality, type AtmoBodyFrame, type CloudFrame } from "../render/planetaryPass";
-import { Lighting } from "../render/lighting";
+import { Lighting, STARLIGHT } from "../render/lighting";
 import { makeStars, type Starfield } from "../render/starfield";
+import { OrbitLines } from "../render/orbitLines";
 import { ChaseRig, cockpitPose, firstPersonPose, type CameraPose } from "../render/cameraRig";
-import { sunTransmittance } from "../render/atmosphereModel";
+import { skyAmount } from "../render/atmosphereModel";
 import { cloudDensityAt } from "../render/cloudModel";
 import { Hud, type HudModel, type HudTarget, type InventoryModel } from "../ui/hud";
 import { DISCOVERIES, itemName } from "../data/content";
@@ -139,6 +140,7 @@ export class Game {
   readonly planetary: PlanetaryPass;
   readonly lighting: Lighting;
   readonly starfield: Starfield;
+  readonly orbitLines: OrbitLines;
   readonly pool: TerrainWorkerPool;
   readonly sim: SimWorld;
   readonly views = new Map<string, BodyView>();
@@ -241,12 +243,25 @@ export class Game {
       }
     }
 
+    // Orbit paths (fade in above the atmosphere; O toggles).
+    this.orbitLines = new OrbitLines(
+      scene,
+      VESPER_DRIFT.filter((d) => d.orbit).map((d) => ({
+        body: this.sim.system.get(d.id),
+        style:
+          d.kind === "moon"
+            ? { color: [0.75, 0.82, 0.95] as [number, number, number], alpha: 0.35 }
+            : { color: [0.5, 0.72, 1.0] as [number, number, number], alpha: 0.5 },
+      })),
+    );
+
     // Ship visual.
     this.shipRig = buildShip(scene);
     this.shipRoot = this.shipRig.root;
     this.shipRoot.rotationQuaternion = Quaternion.Identity();
     const glowLayer = scene.getGlowLayerByName("main-glow");
     glowLayer?.addExcludedMesh(this.starfield.mesh);
+    for (const m of this.orbitLines.meshes) glowLayer?.addExcludedMesh(m);
     const star = this.views.get("vesper")?.star;
     if (star) {
       glowLayer?.addExcludedMesh(star.core);
@@ -422,6 +437,10 @@ export class Game {
     if (input.pressed("toggleAssist") && sim.mode === "ship") {
       sim.ship.assist = !sim.ship.assist;
       this.events.emit("toast", { text: `Flight assist ${sim.ship.assist ? "on" : "off"}` });
+    }
+    if (input.pressed("orbitLines")) {
+      this.orbitLines.enabled = !this.orbitLines.enabled;
+      this.events.emit("toast", { text: `Orbit lines ${this.orbitLines.enabled ? "on" : "off"}` });
     }
     if (input.pressed("interact")) this.interact();
     if (input.pressed("inventory")) this.setInventoryOpen(!this.inventoryOpen);
@@ -626,6 +645,15 @@ export class Game {
     });
     this.starfield.setBrightness(Math.max(0.02, 1 - light.skyBrightness * 1.1));
 
+    // Orbit lines: in from the top of the air (or a few hundred metres up on
+    // an airless body) to twice that, and gone under a bright sky.
+    const fadeFrom = focusDef.atmosphere?.height ?? 300;
+    const camAlt = camRelFocus.length() - focusDef.radius;
+    const orbitFade = nearFocus
+      ? clamp((camAlt - fadeFrom) / fadeFrom, 0, 1) * clamp(1 - light.skyBrightness * 2, 0, 1)
+      : 1;
+    this.orbitLines.update((id) => this.frames.get(id)!.position.subtract(camI), tR, orbitFade);
+
     // Sky + clouds: the two nearest atmospheres (drawn far -> near).
     const atmoBodies: (AtmoBodyFrame & { dist: number })[] = [];
     for (const [id, view] of this.views) {
@@ -638,18 +666,19 @@ export class Game {
     const cp = focusView.clouds;
     if (cp && camRelFocus.length() < 30000) {
       const inv = Quaternion.Inverse(focusFrame.rotation);
-      const deckR = cp.radius + cp.base + cp.thickness * 0.5;
-      const deck = camRelFocus.clone().normalize().scale(deckR);
-      const T = focusView.atmo
-        ? sunTransmittance(focusView.atmo, deck.x, deck.y, deck.z, toSun.x, toSun.y, toSun.z)
-        : [1, 1, 1];
+      // Sun and sky light are resolved per cloud sample in the shader (planet
+      // shadow + air), not once under the camera.
+      const deckAlt = cp.radius + cp.base + cp.thickness * 0.5 - (focusView.atmo?.groundRadius ?? cp.radius);
+      const deckSky = focusView.atmo ? skyAmount(focusView.atmo, deckAlt) : 0;
       cloudFrame = {
         center: focusFrame.position.subtract(camI),
         worldToBody: Matrix.FromQuaternionToRef(inv, new Matrix()),
         params: cp,
         sunLocal: toSun.applyRotationQuaternion(inv),
-        sunColor: new Color3(T[0], T[1], T[2]).scale(SUN_INTENSITY),
-        ambient: light.ambient.scale(0.25 + light.skyBrightness * 0.9),
+        sunColor: new Color3(SUN_INTENSITY, SUN_INTENSITY, SUN_INTENSITY),
+        atmo: focusView.atmo ?? null,
+        ambientDay: skyColor.scale(0.25 + deckSky * 0.9),
+        ambientNight: STARLIGHT.scale(0.25),
         time: tR,
         hazeScale: focusView.atmo?.hM ?? 150,
       };

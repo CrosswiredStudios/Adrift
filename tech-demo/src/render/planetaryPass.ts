@@ -59,10 +59,18 @@ export interface CloudFrame {
   params: CloudParams;
   /** Sun direction (toward the sun) in the body frame. */
   sunLocal: Vector3;
-  /** Sunlight colour reaching the deck (HDR, already atmosphere-attenuated). */
+  /**
+   * Sunlight above the atmosphere (HDR). The shader dims and reddens it per
+   * cloud sample through `atmo` and the planet's shadow, so the night side
+   * is dark and the terminator glows.
+   */
   sunColor: Color3;
-  /** Ambient sky light on the clouds (HDR). */
-  ambient: Color3;
+  /** Atmosphere the sunlight passes through on its way to the deck (null = airless). */
+  atmo: AtmoParams | null;
+  /** Ambient sky light on the clouds where the sun is high (HDR). */
+  ambientDay: Color3;
+  /** Ambient on the night side (starlight, HDR). */
+  ambientNight: Color3;
   time: number;
   /** Haze (Mie) scale height of the atmosphere (m), for light shafts. */
   hazeScale: number;
@@ -197,7 +205,10 @@ varying vec2 vUV;
 uniform vec2 uRes;
 ${CLOUD_UNIFORMS_GLSL}
 uniform vec3 uSunColor;
-uniform vec3 uAmbient;
+uniform vec3 uAmbientDay;
+uniform vec3 uAmbientNight;
+uniform vec4 uAtmoR;    // groundR, topR (0 = no air), hR, hM
+uniform vec4 uAtmoBeta; // betaR.rgb, betaMExt
 uniform float uSteps;
 uniform float uLightSteps;
 uniform float uShafts;
@@ -245,10 +256,61 @@ void deckSegments(vec3 o, vec3 d, out vec2 s0, out vec2 s1) {
   }
 }
 
+/**
+ * Sunlight reaching body-frame point p: the planet's (slightly soft) shadow
+ * times the air it crosses (mirrors sunTransmittance on the CPU).
+ */
+vec3 sunAt(vec3 p) {
+  float gr = uAtmoR.x > 0.0 ? uAtmoR.x : uPlanetRadius;
+  float pp = dot(p, p);
+  float b = dot(p, uSunLocal);
+  // Closest approach of the sun ray to the centre (only if it heads inward).
+  float miss = b < 0.0 ? sqrt(max(pp - b * b, 0.0)) : 1e20;
+  float w = gr * 0.004;
+  float vis = smoothstep(gr - w, gr + w, miss);
+  if (vis <= 0.0) return vec3(0.0);
+  vec3 tr = vec3(1.0);
+  if (uAtmoR.y > 0.0) {
+    float rt = uAtmoR.y;
+    float ht = b * b - (pp - rt * rt);
+    if (ht > 0.0) {
+      float t1 = -b + sqrt(ht);
+      float t0 = pp > rt * rt ? max(-b - sqrt(ht), 0.0) : 0.0;
+      float ds = max(t1 - t0, 0.0) / 6.0;
+      float dR = 0.0;
+      float dM = 0.0;
+      for (int i = 0; i < 6; i++) {
+        float h = max(length(p + uSunLocal * (t0 + (float(i) + 0.5) * ds)) - gr, 0.0);
+        dR += exp(-h / uAtmoR.z) * ds;
+        dM += exp(-h / uAtmoR.w) * ds;
+      }
+      tr = exp(-(uAtmoBeta.rgb * dR + uAtmoBeta.a * dM));
+    }
+  }
+  return tr * vis;
+}
+
+/** Sky light around body-frame point p: day tint, twilight glow, starlight. */
+vec3 ambientAt(vec3 p) {
+  float el = dot(normalize(p), uSunLocal);
+  float day = smoothstep(-0.12, 0.25, el);
+  float twilight = smoothstep(0.35, 0.0, abs(el)) * smoothstep(-0.25, -0.05, el);
+  float lum = dot(uAmbientDay, vec3(0.3333));
+  return mix(uAmbientNight, uAmbientDay, day) + vec3(1.0, 0.6, 0.38) * lum * twilight * 0.35;
+}
+
 void marchDeck(vec3 o, vec3 d, vec2 seg, float steps, float phase, float jitter, inout vec3 scatter, inout float T) {
   if (seg.y <= seg.x || steps < 0.5) return;
   float dt = (seg.y - seg.x) / steps;
   float t = seg.x + jitter * dt;
+  // Sun and sky light vary slowly across one segment (<= 8 km): evaluate at
+  // both ends and interpolate.
+  vec3 pA = o + d * seg.x;
+  vec3 pB = o + d * seg.y;
+  vec3 sunA = uSunColor * sunAt(pA);
+  vec3 sunB = uSunColor * sunAt(pB);
+  vec3 ambA = ambientAt(pA);
+  vec3 ambB = ambientAt(pB);
   for (int i = 0; i < 96; i++) {
     if (float(i) >= steps || T < 0.02) break;
     vec3 p = o + d * t;
@@ -263,7 +325,8 @@ void marchDeck(vec3 o, vec3 d, vec2 seg, float steps, float phase, float jitter,
       }
       float lightT = exp(-od * uExtinction) + 0.25 * exp(-od * uExtinction * 0.2);
       float h = clamp((length(p) - uPlanetRadius - uCloudBase) / uCloudThickness, 0.0, 1.0);
-      vec3 L = uSunColor * lightT * phase * 6.0 + uAmbient * (0.45 + 0.55 * h);
+      float f = clamp((t - seg.x) / (seg.y - seg.x), 0.0, 1.0);
+      vec3 L = mix(sunA, sunB, f) * lightT * phase * 6.0 + mix(ambA, ambB, f) * (0.45 + 0.55 * h);
       float sigma = den * uExtinction;
       float a = 1.0 - exp(-sigma * dt);
       scatter += T * L * a;
@@ -335,7 +398,7 @@ void main() {
       ts += ds;
     }
     float mu = dot(d, uSunLocal);
-    shafts = uSunColor * (hg(mu, 0.76) + 0.08) * acc * ${SHAFT_STRENGTH.toFixed(5)};
+    shafts = uSunColor * sunAt(o) * (hg(mu, 0.76) + 0.08) * acc * ${SHAFT_STRENGTH.toFixed(5)};
     // Seen from above the deck the shafts are behind the clouds.
     if (oo > rb * rb) shafts *= T;
   }
@@ -363,6 +426,40 @@ ${ATMOSPHERE_GLSL}
 ${CLOUD_DENSITY_GLSL}
 ${CLOUD_SHADOW_GLSL}
 
+/**
+ * The planet's shadow along a ray (origin relative to the centre): the
+ * cylinder of radius r behind the planet, away from the sun. Returns the
+ * [enter, exit] span, empty (x >= y) when the ray misses it.
+ */
+vec2 shadowSpan(vec3 o, vec3 d, float r) {
+  vec2 none = vec2(1e20, -1e20);
+  float os = dot(o, uSunDir);
+  float ds = dot(d, uSunDir);
+  vec3 op = o - uSunDir * os;
+  vec3 dp = d - uSunDir * ds;
+  float a = dot(dp, dp);
+  float b = dot(op, dp);
+  float c = dot(op, op) - r * r;
+  vec2 s = vec2(-1e20, 1e20);
+  if (a > 1e-8) {
+    float h = b * b - a * c;
+    if (h < 0.0) return none;
+    h = sqrt(h);
+    s = vec2((-b - h) / a, (-b + h) / a);
+  } else if (c > 0.0) {
+    return none;
+  }
+  // Only the half behind the planet (p . sun < 0).
+  if (abs(ds) > 1e-6) {
+    float tp = -os / ds;
+    if (ds > 0.0) s.y = min(s.y, tp);
+    else s.x = max(s.x, tp);
+  } else if (os >= 0.0) {
+    return none;
+  }
+  return s;
+}
+
 void atmosphere(int k, vec3 camPos, vec3 dir, float tMax, inout vec3 col) {
   vec3 o = camPos - uCenter[k];
   vec4 R = uRadii[k];
@@ -381,34 +478,44 @@ void atmosphere(int k, vec3 camPos, vec3 dir, float tMax, inout vec3 col) {
   float pR = phaseRayleigh(mu);
   float pM = phaseMie(mu, uMie[k].y);
   float dt = (t1 - t0) / uAtmoSteps;
+  // Where the ray is in the planet's shadow. Each step is weighted by the
+  // share of it that is sunlit, so the shadow edge moves smoothly across the
+  // sky instead of jumping one whole step at a time (which drew hard arcs).
+  vec2 sh = shadowSpan(o, dir, R.x);
   float odR = 0.0;
   float odM = 0.0;
   vec3 sumR = vec3(0.0);
   vec3 sumM = vec3(0.0);
   for (int i = 0; i < 24; i++) {
     if (float(i) >= uAtmoSteps) break;
-    vec3 p = o + dir * (t0 + (float(i) + 0.5) * dt);
+    float ta = t0 + float(i) * dt;
+    float tb = ta + dt;
+    vec3 p = o + dir * (ta + 0.5 * dt);
     float h = max(length(p) - R.x, 0.0);
     float dR = exp(-h / R.z) * dt;
     float dM = exp(-h / R.w) * dt;
     odR += dR;
     odM += dM;
-    // Sunlight reaching p: blocked by the planet, attenuated by the air above.
-    vec2 gs = raySphere(p, uSunDir, R.x);
-    if (gs.x < gs.y && gs.x > 0.0) continue;
-    vec2 ts = raySphere(p, uSunDir, R.y);
+    // Sunlit share of this step, and a lit point in it for the light march.
+    float s0 = clamp(sh.x, ta, tb);
+    float s1 = clamp(sh.y, ta, tb);
+    float lit = 1.0 - max(s1 - s0, 0.0) / dt;
+    if (lit <= 1e-3) continue;
+    vec3 pl = o + dir * (s0 - ta >= tb - s1 ? 0.5 * (ta + s0) : 0.5 * (s1 + tb));
+    if (lit >= 0.999) pl = p;
+    vec2 ts = raySphere(pl, uSunDir, R.y);
     float ls = ts.y / 4.0;
     float lR = 0.0;
     float lM = 0.0;
     for (int j = 0; j < 4; j++) {
-      float hl = max(length(p + uSunDir * ls * (float(j) + 0.5)) - R.x, 0.0);
+      float hl = max(length(pl + uSunDir * ls * (float(j) + 0.5)) - R.x, 0.0);
       lR += exp(-hl / R.z) * ls;
       lM += exp(-hl / R.w) * ls;
     }
     vec3 tau = betaR * (odR + lR) + betaMExt * (odM + lM);
     vec3 att = exp(-tau);
-    sumR += att * dR;
-    sumM += att * dM;
+    sumR += att * dR * lit;
+    sumM += att * dM * lit;
   }
   vec3 inscatter = uSunE * (sumR * betaR * pR + sumM * betaM * pM);
   vec3 trans = exp(-(betaR * odR + betaMExt * odM));
@@ -488,7 +595,10 @@ export class PlanetaryPass {
         "uTime",
         "uSunLocal",
         "uSunColor",
-        "uAmbient",
+        "uAmbientDay",
+        "uAmbientNight",
+        "uAtmoR",
+        "uAtmoBeta",
         "uSteps",
         "uLightSteps",
         "uShafts",
@@ -546,7 +656,16 @@ export class PlanetaryPass {
       if (!f) return;
       this.bindCloudDeck(e, f);
       e.setColor3("uSunColor", f.sunColor);
-      e.setColor3("uAmbient", f.ambient);
+      e.setColor3("uAmbientDay", f.ambientDay);
+      e.setColor3("uAmbientNight", f.ambientNight);
+      const a = f.atmo;
+      if (a) {
+        e.setFloat4("uAtmoR", a.groundRadius, a.topRadius, a.hR, a.hM);
+        e.setFloat4("uAtmoBeta", a.betaR[0], a.betaR[1], a.betaR[2], a.betaMExt);
+      } else {
+        e.setFloat4("uAtmoR", 0, 0, 1, 1);
+        e.setFloat4("uAtmoBeta", 0, 0, 0, 0);
+      }
       e.setFloat("uHazeScale", f.hazeScale);
     };
 

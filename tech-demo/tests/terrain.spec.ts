@@ -25,6 +25,30 @@ test("quadtree refines around the player and textures load", async () => {
   expectNoErrors(shared.errors());
 });
 
+test("the depth pass draws terrain with the geomorph material", async () => {
+  const page = shared.page();
+  // Babylon compiles the per-pass effect on first use: render until ready.
+  await page.waitForFunction(
+    () => {
+      const g = (window as any).__game;
+      g.render();
+      const dr = g.scene.enableDepthRenderer(g.camera, false, true);
+      const passId = dr.getDepthMap().renderPassId;
+      const chunks = g.scene.meshes.filter((m: any) => m.metadata?.terrainBody === "vael" && m.isEnabled());
+      return (
+        chunks.length > 0 &&
+        chunks.every((m: any) => {
+          const mat = m._internalAbstractMeshDataInfo._materialForRenderPass?.[passId];
+          return mat?.getClassName() === "ShaderMaterial" && dr.isReady(m.subMeshes[0], false);
+        })
+      );
+    },
+    null,
+    { timeout: 60000, polling: 500 },
+  );
+  expectNoErrors(shared.errors());
+});
+
 test("collision uses the exact height field the chunks are built from", async () => {
   const page = shared.page();
   const res = await page.evaluate(() => {
