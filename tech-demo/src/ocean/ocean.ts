@@ -35,6 +35,9 @@ import { tangentBasis } from "../common/frames";
  * composite samples a half-res colour target of the ground.
  */
 
+/** Camera drift (m, in the patch plane) before the patch re-anchors. */
+const PATCH_REANCHOR = 400;
+
 export interface OceanOptions {
   radius: number;
   /** Sea level above the mean radius (m). */
@@ -123,6 +126,7 @@ export function createOcean(
     mat.backFaceCulling = false;
     mat.useLogarithmicDepth = true;
     mat.setFloat("uPatchMode", patchMode);
+    mat.setFloat("uPatchExtent", patchCfg.radius);
     mat.setTexture("uDepthTex", opts.depthTexture);
     mat.setTexture("uRefrTex", opts.refractionTexture);
     mat.setTexture("uHeightMap", opts.depthTexture); // placeholder until the bake arrives
@@ -180,8 +184,8 @@ export function createOcean(
   let patchUp = new Vector3(0, 1, 0);
   let patchT = new Vector3(1, 0, 0);
   let patchB = new Vector3(0, 0, 1);
-  let lastQx = Infinity;
-  let lastQy = Infinity;
+  const patchOff = new Vector2(0, 0);
+  let anchored = false;
   let qualityHigh = true;
   let heightReady = false;
   const tint = new Vector3();
@@ -190,25 +194,34 @@ export function createOcean(
     const camDist = f.camLocal.length();
     const alt = camDist - seaRadius;
 
-    // Patch frame (body frame): nadir direction + tangent basis. The lattice
-    // snaps to whole cells so it doesn't swim; the wave field itself is
-    // anchored to the body, so snapping never moves the water.
+    // Patch frame (body frame). The anchor (up + tangent basis) stays fixed
+    // while the camera is within PATCH_REANCHOR of it; the grid follows the
+    // camera by whole centre cells in that plane (uPatchOff), so vertices
+    // don't swim or rotate across the terrain every frame. (It used to
+    // re-centre on the exact camera direction, which re-sampled the depth
+    // map at new points each frame and made the shoreline flicker.)
     if (camDist > 1e-3) {
-      const dir = f.camLocal.scale(1 / camDist);
-      const { t1, t2 } = tangentBasis(dir);
       const cell = patchCfg.radius / (2 * patchCfg.half);
-      const qx = Math.round(Vector3.Dot(f.camLocal, t1) / cell) * cell;
-      const qy = Math.round(Vector3.Dot(f.camLocal, t2) / cell) * cell;
-      if (qx !== lastQx || qy !== lastQy || Vector3.Dot(dir, patchUp) < 0.999999) {
-        lastQx = qx;
-        lastQy = qy;
-        patchUp = dir;
+      const reanchor = (): void => {
+        patchUp = f.camLocal.scale(1 / camDist);
+        const { t1, t2 } = tangentBasis(patchUp);
         patchT = t1;
         patchB = t2;
+        anchored = true;
+      };
+      if (!anchored) reanchor();
+      let ox = Vector3.Dot(f.camLocal, patchT);
+      let oy = Vector3.Dot(f.camLocal, patchB);
+      if (Math.hypot(ox, oy) > PATCH_REANCHOR || Vector3.Dot(f.camLocal, patchUp) <= 0) {
+        reanchor();
+        ox = 0;
+        oy = 0;
       }
+      patchOff.set(Math.round(ox / cell) * cell, Math.round(oy / cell) * cell);
     }
     const maxAlt = qualityHigh ? patchCfg.maxAlt : patchCfg.maxAlt * 0.6;
-    patch.setEnabled(alt > -30 && alt < maxAlt);
+    const patchOn = alt > -30 && alt < maxAlt;
+    patch.setEnabled(patchOn);
 
     tint.set(f.sunTint.r, f.sunTint.g, f.sunTint.b);
     const ambient = 0.12 + 0.88 * f.daylight;
@@ -222,6 +235,8 @@ export function createOcean(
       mat.setVector3("uPatchUp", patchUp);
       mat.setVector3("uPatchT", patchT);
       mat.setVector3("uPatchB", patchB);
+      mat.setVector2("uPatchOff", patchOff);
+      mat.setFloat("uPatchOn", patchOn ? 1 : 0);
       mat.setFloat("uSeaValid", f.isHost ? 1 : 0);
     }
   };

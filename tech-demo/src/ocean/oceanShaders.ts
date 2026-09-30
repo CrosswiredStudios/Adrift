@@ -1,6 +1,6 @@
 import { WaveSet, WAVE_GLSL, swashGLSL } from "./oceanWaves";
 import { FAST_NOISE_GLSL, OCEAN_MATH_GLSL, SkyPalette, glslNum, skyGLSL } from "../common/shaderChunks";
-import { BAKE_MIN, BAKE_RANGE } from "../terrain/terrainJobs";
+import { BAKE_MIN, BAKE_RANGE, HEIGHT_BAKE_H, HEIGHT_BAKE_W } from "../terrain/terrainJobs";
 
 /**
  * Ocean ShaderMaterial sources.
@@ -25,6 +25,9 @@ export const OCEAN_UNIFORMS = [
   "uPatchUp",
   "uPatchT",
   "uPatchB",
+  "uPatchOff",
+  "uPatchOn",
+  "uPatchExtent",
   "uPatchMode",
   "uShoreDetail",
   "uSurfEps",
@@ -65,10 +68,26 @@ const HEIGHT_DECODE = `
 vec2 dirToUv(vec3 d) {
   return vec2(atan(d.z, d.x) * 0.15915494 + 0.5, acos(clamp(d.y, -1.0, 1.0)) * 0.31830989);
 }
-/** Terrain height (m above the mean radius) under a unit direction. */
+const vec2 HEIGHT_SIZE = vec2(${glslNum(HEIGHT_BAKE_W)}, ${glslNum(HEIGHT_BAKE_H)});
+float heightTexel(vec2 ij) {
+  vec4 t = texture2D(uHeightMap, (ij + 0.5) / HEIGHT_SIZE);
+  return (t.r * 255.0 * 256.0 + t.g * 255.0) / 65535.0;
+}
+/**
+ * Terrain height (m above the mean radius) under a unit direction. The map
+ * is sampled NEAREST and interpolated here: hardware bilinear on the packed
+ * R/G bytes produced metre-scale spikes wherever the low byte wrapped, which
+ * made the waterline jagged.
+ */
 float terrainHeightAt(vec3 d) {
-  vec4 t = texture2D(uHeightMap, dirToUv(d));
-  float q = (t.r * 255.0 * 256.0 + t.g * 255.0) / 65535.0;
+  vec2 st = dirToUv(d) * HEIGHT_SIZE - 0.5;
+  vec2 i0 = floor(st);
+  vec2 f = st - i0;
+  float h00 = heightTexel(i0);
+  float h10 = heightTexel(i0 + vec2(1.0, 0.0));
+  float h01 = heightTexel(i0 + vec2(0.0, 1.0));
+  float h11 = heightTexel(i0 + vec2(1.0, 1.0));
+  float q = mix(mix(h00, h10, f.x), mix(h01, h11, f.x), f.y);
   return q * ${glslNum(BAKE_RANGE)} + ${glslNum(BAKE_MIN)};
 }`;
 
@@ -87,6 +106,7 @@ uniform float uSeaLevel;
 uniform vec3 uPatchUp;
 uniform vec3 uPatchT;
 uniform vec3 uPatchB;
+uniform vec2 uPatchOff;
 uniform float uPatchMode;
 uniform sampler2D uHeightMap;
 uniform float uHeightValid;
@@ -114,7 +134,10 @@ void main() {
   vec3 tA;
   vec3 tB;
   if (uPatchMode > 0.5) {
-    n = normalize(uPatchUp * uSeaRadius + uPatchT * position.x + uPatchB * position.z);
+    // Grid positions + a whole-cell offset in a fixed anchor plane: the
+    // lattice only ever jumps by one centre cell, and never rotates.
+    vec2 gp = position.xz + uPatchOff;
+    n = normalize(uPatchUp * uSeaRadius + uPatchT * gp.x + uPatchB * gp.y);
     tA = uPatchT - n * dot(uPatchT, n);
     tA = length(tA) > 1e-4 ? normalize(tA) : normalize(cross(n, vec3(0.0, 1.0, 0.0)));
   } else {
@@ -159,14 +182,23 @@ void main() {
     // Shell: only the slow run-up shapes the geometry; the rest is shading.
     radial = rise;
     tangent = vec3(0.0);
+    // Far field only (the patch covers the near shore): keep the coarse
+    // shell from riding up over low land.
+    float landAbove = max(h0 - uSeaLevel, 0.0);
+    if (landAbove > 0.0) radial = min(radial, max(landAbove - 0.5, 0.0));
   } else {
-    // Patch: run-up damped (coarse grid -> visible facets), bias above the shell.
-    radial = dispRad + rise * 0.5 + ${glslNum(patchBias)};
-    tangent = dispTan;
+    // Patch. Near the shore the surface is only sea level + the run-up:
+    // both are smooth (the run-up wavelengths are tens of metres), so the
+    // waterline -- where this surface meets the rendered ground -- no longer
+    // depends on where the (camera-following) vertices happen to sit. The
+    // Gerstner waves, their sideways motion and the anti-z-fight bias fade
+    // out over the last ~2 m of depth. This replaces the old per-vertex
+    // "never above land" clamp, which cut the run-up off along a
+    // vertex-sampled contour and shimmered whenever the grid moved.
+    float shoreCalm = smoothstep(0.0, 2.0, depth);
+    radial = (dispRad + ${glslNum(patchBias)}) * shoreCalm + rise * mix(1.0, 0.5, shoreCalm);
+    tangent = dispTan * shoreCalm;
   }
-  // Never let the water ride above the land (same height field as the ground).
-  float landAbove = max(h0 - uSeaLevel, 0.0);
-  if (landAbove > 0.0) radial = min(radial, max(landAbove - 0.5, 0.0));
   vec3 nrm = normalize(waveNrm - tA * slopeT - tB * slopeB);
 
   vec3 lp = n * (uSeaRadius + radial) + tangent;
@@ -198,6 +230,14 @@ varying float vBreaking;
 varying float vWaveHeight;
 varying float vEyeDepth;
 varying vec4 vClip;
+uniform float uPatchMode;
+uniform float uPatchOn;
+uniform float uPatchExtent;
+uniform float uSeaRadius;
+uniform vec3 uPatchUp;
+uniform vec3 uPatchT;
+uniform vec3 uPatchB;
+uniform vec2 uPatchOff;
 
 uniform mat4 viewProjection;
 uniform mat4 world;
@@ -244,7 +284,23 @@ float sceneDepthAt(vec2 uv) {
 
 void main() {
   #include<logDepthFragment>
-  if (vDepth < -0.05) discard;
+  // Coarse cull only: the height map is ~6 m per texel and the patch vertices
+  // slide as the camera moves, so a tight vDepth test cut the waterline along
+  // triangle edges that flickered. The visible waterline is where the water
+  // plane meets the rendered ground (depth test + the contact fade below).
+  if (vDepth < -3.0) discard;
+  // The coarse shell (vertices tens of metres apart) must not show through
+  // where the fine patch covers: its own run-up facets made a second,
+  // jagged waterline at the beach.
+  if (uPatchMode < 0.5 && uPatchOn > 0.5) {
+    vec3 sd = normalize(vLocalPos);
+    float sc = dot(sd, uPatchUp);
+    if (sc > 0.0) {
+      vec3 sp = sd * (uSeaRadius / sc);
+      vec2 g = vec2(dot(sp, uPatchT), dot(sp, uPatchB)) - uPatchOff;
+      if (max(abs(g.x), abs(g.y)) < uPatchExtent - 12.0) discard;
+    }
+  }
 
   vec3 up = normalize(vLocalPos);
   vec3 V = normalize(uCamLocal - vLocalPos);
@@ -292,6 +348,8 @@ void main() {
   surfaceCol *= max(uSunAmbient, 0.05);
 
   vec2 sUv = clamp(vClip.xy / vClip.w * 0.5 + 0.5, 0.001, 0.999);
+  // Water in front of the ground behind this pixel (camera-space z), per pixel.
+  float sheet = uSeaValid > 0.5 ? max(sceneDepthAt(sUv) - vEyeDepth, 0.0) : 1.0e9;
   float foam = 0.0;
   if (uFoamAmount > 0.01) {
     float pattern = foamPattern(vLocalPos, uTime);
@@ -305,7 +363,6 @@ void main() {
     foam = max(whitecap, surf) * 0.8 * uFoamAmount;
 
     if (uShoreDetail > 0.5 && uSeaValid > 0.5) {
-      float sheet = max(sceneDepthAt(sUv) - vEyeDepth, 0.0);
       float contact = 1.0 - smoothstep(0.12, 1.1, sheet);
       float dRun = cos(ph);
       float lace = smoothstep(0.25, -0.65, dRun) * (0.4 + 0.6 * pattern);
@@ -329,8 +386,8 @@ void main() {
 
   vec3 finalCol = surfaceCol;
   float finalAlpha = alpha;
-  if (uRefraction > 0.5 && uSeaValid > 0.5 && vDepth > 0.02) {
-    float path = max(sceneDepthAt(sUv) - vEyeDepth, 0.0);
+  if (uRefraction > 0.5 && uSeaValid > 0.5) {
+    float path = sheet;
     if (path < 200.0) {
       vec3 rDir = refract(-V, n, 0.75);
       float travel = path / max(dot(rDir, -V), 0.25);
@@ -344,6 +401,10 @@ void main() {
       finalAlpha = 1.0;
     }
   }
+
+  // Soft, pixel-accurate waterline: fade the last few centimetres of water
+  // over the ground instead of a hard polygon edge.
+  if (uSeaValid > 0.5) finalAlpha *= smoothstep(0.0, 0.3, sheet);
 
   gl_FragColor = vec4(finalCol, finalAlpha);
   if (finalAlpha < 0.01) discard;
