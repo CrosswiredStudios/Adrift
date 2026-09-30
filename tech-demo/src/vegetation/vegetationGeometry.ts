@@ -103,7 +103,7 @@ export function addTrunk(
 export interface SpeciesGeometry {
   meshName: string;
   geo: GeoAccum;
-  material: "bark" | "plants" | "fir" | "canopy" | "needles";
+  material: "bark" | "plants" | "grass" | "canopy" | "needles";
 }
 
 export function buildBroadleafGeometry(look: VegetationLook): SpeciesGeometry[] {
@@ -181,6 +181,23 @@ export function buildConiferGeometry(look: VegetationLook): SpeciesGeometry[] {
   ];
 }
 
+/**
+ * Tilt card normals toward +Y (`k` = 1: straight up). Low plants then shade
+ * like the ground they grow from instead of going dark whenever the sun is
+ * behind a vertical card.
+ */
+function bendNormalsUp(g: GeoAccum, k: number): void {
+  for (let i = 0; i < g.normals.length; i += 3) {
+    const x = g.normals[i] * (1 - k);
+    const y = g.normals[i + 1] * (1 - k) + k;
+    const z = g.normals[i + 2] * (1 - k);
+    const l = Math.hypot(x, y, z) || 1;
+    g.normals[i] = x / l;
+    g.normals[i + 1] = y / l;
+    g.normals[i + 2] = z / l;
+  }
+}
+
 export function buildShrubGeometry(look: VegetationLook): SpeciesGeometry[] {
   const H = look.shrubHeight;
   const geo = newGeo();
@@ -197,6 +214,7 @@ export function buildShrubGeometry(look: VegetationLook): SpeciesGeometry[] {
       H * 0.95,
     );
   }
+  bendNormalsUp(geo, 0.75);
   return [{ meshName: "shrub", geo, material: "plants" }];
 }
 
@@ -216,5 +234,6 @@ export function buildGrassGeometry(look: VegetationLook): SpeciesGeometry[] {
       H * 0.9,
     );
   }
-  return [{ meshName: "grass", geo, material: "fir" }];
+  bendNormalsUp(geo, 1);
+  return [{ meshName: "grass", geo, material: "grass" }];
 }

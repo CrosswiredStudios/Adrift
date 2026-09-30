@@ -152,7 +152,6 @@ export function buildWaveSet(settings: WaveSettings, seed: number): WaveSet {
 
   // Gerstner horizontal displacement: keep the summed steepness (sum of
   // horiz * k * A) below ~1 so the surface cannot fold onto itself.
-  const perCascade = [2, WIND_LAMBDAS.length, CHOP_LAMBDAS.length];
   for (let c = 0; c < WAVE_CASCADES; c++) {
     const members = components.filter((w) => w.cascade === c);
     if (members.length === 0) continue;
@@ -163,7 +162,6 @@ export function buildWaveSet(settings: WaveSettings, seed: number): WaveSet {
       w.horiz = Math.min(full, 1.35);
     }
   }
-  void perCascade;
 
   const swash: SwashParams = {
     axis: tiltAxis(base, perp, 4).clone(),
@@ -210,22 +208,39 @@ export function buildWaveSet(settings: WaveSettings, seed: number): WaveSet {
 
 // --- CPU mirrors (flight model / buoyancy) --------------------------------
 
+/** CPU twin of swashRise() in swashGLSL (same phases, incl. the +1.1 offset). */
 export function cpuSwashRise(swash: SwashParams, p: Vector3, time: number, shallow = 0): number {
   const kA = (2 * Math.PI) / swash.lambdaA;
   const kB = (2 * Math.PI) / swash.lambdaB;
-  const phase = kA * Vector3.Dot(swash.axis, p) - kA * swash.speedA * time - swash.retard * shallow;
-  const phaseB = kB * Vector3.Dot(swash.axis, p) - kB * swash.speedB * time - swash.retard * shallow * 0.6;
+  const lag = swash.retard * shallow;
+  const d = Vector3.Dot(swash.axis, p);
+  const phase = kA * d - kA * swash.speedA * time - lag;
+  const phaseB = kB * d - kB * swash.speedB * time - lag * 0.6 + 1.1;
   return (swash.ampA * Math.sin(phase) + swash.ampB * Math.sin(phaseB)) * (0.75 + 0.6 * shallow);
 }
 
-/** Radial wave height at a world position (wind waves + swash), world units. */
+function smoothstep01(e0: number, e1: number, x: number): number {
+  const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * Radial wave height at a body-frame position on the sea sphere (deep water:
+ * no shoaling), matching the shader's dispRad + swash. Includes the pole
+ * fade the shader applies near each wave's axis.
+ */
 export function cpuWaveHeightAt(set: WaveSet, p: Vector3, time: number, shallow = 0): number {
   let h = 0;
+  const len = p.length() || 1;
   for (let i = 0; i < set.count; i++) {
     const w = set.components[i];
     const k = (2 * Math.PI) / w.wavelength;
-    const phase = k * Vector3.Dot(w.axis, p) + w.phase - k * w.speed * time;
-    h += w.amplitude * Math.sin(phase);
+    const along = Vector3.Dot(w.axis, p);
+    const cosA = along / len;
+    const tLen = Math.sqrt(Math.max(0, 1 - cosA * cosA));
+    const fade = smoothstep01(0.015, 0.16, tLen);
+    const phase = k * along + w.phase - k * w.speed * time;
+    h += w.amplitude * fade * Math.sin(phase);
   }
   return h + cpuSwashRise(set.swash, p, time, shallow);
 }

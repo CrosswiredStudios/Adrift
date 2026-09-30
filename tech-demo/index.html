@@ -3,20 +3,14 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Adrift — Seamless Spaceflight Tech Demo</title>
-  <link rel="stylesheet" href="/src/style.css" />
+  <link rel="icon" href="data:," />
+  <title>Adrift</title>
 </head>
 <body>
   <canvas id="scene"></canvas>
   <div id="hud"></div>
-  <div id="help">W/S pitch · A/D turn · Q/E roll · mouse steer · ↑/↓ throttle · Shift boost · Space/C brake · 1/2/3 targets · H quality · Esc pause</div>
-  <div id="pause">
-    <div class="pause-panel">
-      <h1>Paused</h1>
-      <button id="resume" type="button">Resume</button>
-      <p class="pause-controls">W/S pitch · A/D turn · Q/E roll · mouse steer · ↑/↓ throttle · Shift boost · Space/C brake · 1/2/3 targets · H quality · Esc resume</p>
-    </div>
-  </div>
+  <div id="help">Click to capture mouse · WASD move/thrust · Space jump/up · C down · Q/E roll · Shift sprint/boost · F interact · X hover (hold) · L landing mode · T assist · V camera · Esc pause</div>
+  <div id="pause"></div>
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

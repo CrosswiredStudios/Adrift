@@ -30,3 +30,7 @@ Prove seamless spaceflight and interplanetary travel in Babylon.js:
 - Take off from a planet surface.
 - Fly to orbit with atmospheric scattering transition.
 - Cruise between planets and land on another body.
+
+All three work in the current demo, together with on-foot exploration and a
+short data-driven objective chain. See [tech-demo.md](./tech-demo.md) and
+[architecture.md](./architecture.md).

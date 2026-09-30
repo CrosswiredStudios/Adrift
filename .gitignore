@@ -1,1 +1,25 @@
-/tech-demo/node_modules
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Test artifacts (Playwright)
+test-results/
+playwright-report/
+blob-report/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Local env
+.env
+.env.*
+
+# Git bundles used to hand over commits
+*.bundle
